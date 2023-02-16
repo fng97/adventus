@@ -3,3 +3,9 @@
 
 # Private files
 credentials.py
+
+# Python
+__pycache__
+
+# Mac
+.DS_Store
