@@ -2,22 +2,12 @@
 
 A (hopefully) fun Discord bot.
 
-Bot scopes:
+## Usage
 
-- bot
+Adventus can be added to your server using [this link](https://discord.com/api/oauth2/authorize?client_id=1074795024946036889&permissions=134144&scope=bot).
 
-Bot permissions:
+### Dice Roller
 
-- Read Messages/View Channels
-- Send Messages
-- Mention Everyone
+Use XdY format to roll X dice with Y sides. Returns the value of each die.
 
-Things to sort:
-
-- [ ] Add branch protections and work from `development`.
-- [ ] Add a license.
-- [ ] Add usage instructions.
-- [ ] Add dependency management.
-- [ ] Version development environment.
-  - [ ] Extensions to use.
-  - [ ] Extension workspace settings.
+For example, `!roll 2d20` returns something like: "`@user` rolled 13, 7."
