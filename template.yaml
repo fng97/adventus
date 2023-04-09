@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "v1.1.0: Adventus Infrastructure"
+
+Parameters:
+  AppPublicKeyParameterName:
+    Description: The public key for the Discord application.
+    Type: String
+    AllowedPattern: '^(|\/.*[^\/])$'
+    ConstraintDescription: |
+      Parameters follow a hierarchical naming convention so they should start with a forward slash.
+
+Resources:
+  RestApi:
+    Description: The Adventus API Gateway.
+    Type: AWS::Serverless::Api
+    Properties:
+      OpenApiVersion: 3.0.1
+      StageName: prod
+      EndpointConfiguration:
+        Type: REGIONAL
+      Cors:
+        AllowMethods: "'POST, GET'"
+        AllowHeaders: "'X-Forwarded-For, Content-Type'"
+        AllowOrigin: "'*'"
+      DefinitionBody:
+        openapi: "3.0.1"
+        info:
+          title: !Sub "${AWS::StackName}: Adventus API"
+        paths:
+          /{proxy+}:
+            x-amazon-apigateway-any-method:
+              parameters:
+                - name: "proxy"
+                  in: "path"
+                  required: true
+                  schema:
+                    type: "string"
+              x-amazon-apigateway-integration:
+                type: "aws_proxy"
+                credentials: !GetAtt RestApiRole.Arn
+                httpMethod: "POST"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiMonolithFunction.Arn}/invocations"
+                cacheKeyParameters:
+                  - "method.request.path.proxy"
+
+  RestApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "apigateway.amazonaws.com"
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: ApiInvokeLambda
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource:
+                - !GetAtt ApiMonolithFunction.Arn
+
+  ApiMonolithFunction:
+    Description: Catch-all function (monolith) handling all API calls.
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/api_monolith
+      Handler: lambda_handler.lambda_handler
+      Runtime: python3.9
+      Timeout: 29 # API Gateway integration timeout is 29s
+      Environment:
+        Variables:
+          LOG_LEVEL: DEBUG
+          POWERTOOLS_SERVICE_NAME: Adventus API Logger
+          POWERTOOLS_LOGGER_LOG_EVENT: true
+          POWERTOOLS_METRICS_NAMESPACE: AdventusApi
+          APP_PUBLIC_KEY_PARAMETER_NAME: !Ref AppPublicKeyParameterName
+      Policies:
+        - Statement:
+            Effect: Allow
+            Action:
+              - ssm:GetParameter
+            Resource:
+              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${AppPublicKeyParameterName}"
+
+Outputs:
+  ProdApiEndpoint:
+    Description: "API production stage endpoint"
+    Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/"

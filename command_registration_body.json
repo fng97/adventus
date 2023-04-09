@@ -1,0 +1,23 @@
+{
+    "name": "roll",
+    "type": 1,
+    "description": "Roll the dice!",
+    "options": [
+        {
+            "name": "sides",
+            "description": "Number of sides of the dice.",
+            "type": 4,
+            "required": true,
+            "max_value": 100,
+            "min_value": 2
+        },
+        {
+            "name": "rolls",
+            "description": "Number of dice to roll.",
+            "type": 4,
+            "required": false,
+            "max_value": 10,
+            "min_value": 1
+        }
+    ]
+}
