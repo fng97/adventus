@@ -12,3 +12,8 @@ __pycache__
 
 # AWS SAM
 .aws-sam
+
+
+# Added by cargo
+
+/target
