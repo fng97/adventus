@@ -14,6 +14,19 @@
 		},
 		"ghcr.io/customink/codespaces-features/sam-cli:1": {
 			"version": "latest"
+		},
+		"ghcr.io/devcontainers-contrib/features/protoc-asdf:1": {
+			"version": "latest"
+		}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"GitHub.copilot",
+				"yzhang.markdown-all-in-one",
+				"bierner.markdown-mermaid",
+				"DavidAnson.vscode-markdownlint"
+			]
 		}
 	}
 
