@@ -52,3 +52,12 @@ Commands like `/roll` must be registered with Discord before they can be used. C
 ### Infrastructure
 
 The AWS infrastructure is defined using [CloudFormation](https://aws.amazon.com/cloudformation/) in [`template.yaml`](template.yaml) and is deployed using [AWS SAM](https://aws.amazon.com/serverless/sam/).
+
+## Devcontainer Setup
+
+This project can be opened in a devcontainer using the *Dev Containers: Clone Repository in Container Volume* command. It will use the `.devcontainer/devcontainer.json` to build the development container.
+
+The following needs to be done manually after initialising the container. Eventually, I'd like to automate this using a Dockerfile or `"postCreateCommand"` in `devcontainer.json`.
+
+1. Run the following.
+2. `cargo install cargo-shuttle` (and authenticate with `cargo shuttle login`).
