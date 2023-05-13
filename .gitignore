@@ -15,5 +15,7 @@ __pycache__
 
 
 # Added by cargo
-
 /target
+
+# Secrets
+Secrets.toml
