@@ -2,6 +2,7 @@ use anyhow::anyhow;
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
+use serenity::model::voice::VoiceState;
 use serenity::prelude::*;
 use shuttle_secrets::SecretStore;
 use tracing::{error, info};
@@ -21,6 +22,15 @@ impl EventHandler for Bot {
     async fn ready(&self, _: Context, ready: Ready) {
         info!("{} is connected!", ready.user.name);
     }
+
+    async fn voice_state_update(&self, _: Context, voice_state: VoiceState) {
+        // log which user joined which channel in which guild
+        let user = voice_state.user_id;
+        let channel = voice_state.channel_id.unwrap();
+        let guild = voice_state.guild_id.unwrap();
+
+        info!("{} joined {} in {}", user, channel, guild);
+    }
 }
 
 #[shuttle_runtime::main]
@@ -35,7 +45,9 @@ async fn serenity(
     };
 
     // Set gateway intents, which decides what events the bot will be notified about
-    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+    let intents = GatewayIntents::GUILD_MESSAGES
+        | GatewayIntents::MESSAGE_CONTENT
+        | GatewayIntents::GUILD_VOICE_STATES;
 
     let client = Client::builder(&token, intents)
         .event_handler(Bot)
