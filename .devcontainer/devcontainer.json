@@ -27,7 +27,8 @@
 				"GitHub.copilot",
 				"yzhang.markdown-all-in-one",
 				"bierner.markdown-mermaid",
-				"DavidAnson.vscode-markdownlint"
+				"DavidAnson.vscode-markdownlint",
+				"eamodio.gitlens"
 			]
 		}
 	},
