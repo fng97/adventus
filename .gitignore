@@ -9,3 +9,6 @@
 
 # Secrets
 Secrets.toml
+
+# venv
+.venv
