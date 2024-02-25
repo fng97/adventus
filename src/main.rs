@@ -35,15 +35,67 @@ use serenity::{
         },
         StandardFramework,
     },
-    model::{channel::Message, gateway::Ready},
+    model::{channel::Message, gateway::Ready, voice::VoiceState},
     prelude::{GatewayIntents, TypeMapKey},
     Result as SerenityResult,
 };
+
+const SONG_URL: &str = "https://www.youtube.com/watch?v=NCtzkaL2t_Y";
 
 struct HttpKey;
 
 impl TypeMapKey for HttpKey {
     type Value = HttpClient;
+}
+
+async fn connect_voice(
+    ctx: &Context,
+    guild_id: serenity::model::id::GuildId,
+    channel_id: serenity::model::id::ChannelId,
+) -> CommandResult {
+    let manager = songbird::get(ctx)
+        .await
+        .expect("Songbird Voice client placed in at initialisation.")
+        .clone();
+
+    if let Ok(handler_lock) = manager.join(guild_id, channel_id).await {
+        // Attach an event handler to see notifications of all track errors.
+        let mut handler = handler_lock.lock().await;
+        handler.add_global_event(TrackEvent::Error.into(), TrackErrorNotifier);
+    }
+
+    Ok(())
+}
+
+async fn play_sound(
+    ctx: &Context,
+    url: String,
+    guild_id: serenity::model::id::GuildId,
+) -> CommandResult {
+    let http_client = {
+        let data = ctx.data.read().await;
+        data.get::<HttpKey>()
+            .cloned()
+            .expect("Guaranteed to exist in the typemap.")
+    };
+
+    let manager = songbird::get(ctx)
+        .await
+        .expect("Songbird Voice client placed in at initialisation.")
+        .clone();
+
+    if let Some(handler_lock) = manager.get(guild_id) {
+        let mut handler = handler_lock.lock().await;
+
+        let src = YoutubeDl::new(http_client, url);
+        let _ = handler.play_input(src.clone().into());
+
+        println!("Playing song");
+    } else {
+        println!("Not in a voice channel to play in");
+    }
+
+    Ok(())
 }
 
 struct Handler;
@@ -52,6 +104,25 @@ struct Handler;
 impl EventHandler for Handler {
     async fn ready(&self, _: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
+    }
+
+    async fn voice_state_update(&self, ctx: Context, _old: Option<VoiceState>, new: VoiceState) {
+        if let Some(guild_id) = new.guild_id {
+            if let Some(channel_id) = new.channel_id {
+                // Assuming you want to play music only when a specific user (e.g., yourself) joins a voice channel.
+                // You should replace `YOUR_USER_ID` with your actual Discord user ID.
+                // if new.user_id.to_string() == "YOUR_USER_ID" {
+                // Connect to the voice channel
+                if let Err(e) = connect_voice(&ctx, guild_id, channel_id).await {
+                    println!("Error connecting to voice channel: {:?}", e);
+                }
+                // Play the sound
+                if let Err(e) = play_sound(&ctx, SONG_URL.to_string(), guild_id).await {
+                    println!("Error playing sound: {:?}", e);
+                }
+                // }
+            }
+        }
     }
 }
 
@@ -69,7 +140,9 @@ async fn main() {
     let framework = StandardFramework::new().group(&GENERAL_GROUP);
     framework.configure(Configuration::new().prefix("~"));
 
-    let intents = GatewayIntents::non_privileged() | GatewayIntents::MESSAGE_CONTENT;
+    let intents = GatewayIntents::non_privileged()
+        | GatewayIntents::MESSAGE_CONTENT
+        | GatewayIntents::GUILD_VOICE_STATES;
 
     let mut client = Client::builder(&token, intents)
         .event_handler(Handler)
@@ -155,15 +228,13 @@ async fn join(ctx: &Context, msg: &Message) -> CommandResult {
         }
     };
 
-    let manager = songbird::get(ctx)
-        .await
-        .expect("Songbird Voice client placed in at initialisation.")
-        .clone();
-
-    if let Ok(handler_lock) = manager.join(guild_id, connect_to).await {
-        // Attach an event handler to see notifications of all track errors.
-        let mut handler = handler_lock.lock().await;
-        handler.add_global_event(TrackEvent::Error.into(), TrackErrorNotifier);
+    // use connect_voice, return error if failed
+    if let Err(e) = connect_voice(ctx, guild_id, connect_to).await {
+        check_msg(
+            msg.channel_id
+                .say(&ctx.http, format!("Failed: {:?}", e))
+                .await,
+        );
     }
 
     Ok(())
@@ -280,29 +351,11 @@ async fn play(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 
     let guild_id = msg.guild_id.unwrap();
 
-    let http_client = {
-        let data = ctx.data.read().await;
-        data.get::<HttpKey>()
-            .cloned()
-            .expect("Guaranteed to exist in the typemap.")
-    };
-
-    let manager = songbird::get(ctx)
-        .await
-        .expect("Songbird Voice client placed in at initialisation.")
-        .clone();
-
-    if let Some(handler_lock) = manager.get(guild_id) {
-        let mut handler = handler_lock.lock().await;
-
-        let src = YoutubeDl::new(http_client, url);
-        let _ = handler.play_input(src.clone().into());
-
-        check_msg(msg.channel_id.say(&ctx.http, "Playing song").await);
-    } else {
+    // play with play_sound, return error otherwise
+    if let Err(e) = play_sound(ctx, url, guild_id).await {
         check_msg(
             msg.channel_id
-                .say(&ctx.http, "Not in a voice channel to play in")
+                .say(&ctx.http, format!("Failed: {:?}", e))
                 .await,
         );
     }
