@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use reqwest::Client as HttpClient;
 use serenity::{
     async_trait,
@@ -5,10 +6,11 @@ use serenity::{
     model::{gateway::Ready, voice::VoiceState},
     prelude::{GatewayIntents, TypeMapKey},
 };
+use shuttle_secrets::SecretStore;
 use songbird::events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 use songbird::input::YoutubeDl;
 use songbird::SerenityInit;
-use std::env;
+use tracing::info;
 
 const SONG_URL: &str = "https://www.youtube.com/watch?v=V66PMeImkxI";
 
@@ -22,7 +24,7 @@ struct Handler;
 #[async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, _: Context, ready: Ready) {
-        println!("{} is connected!", ready.user.name);
+        info!("{} is connected!", ready.user.name);
     }
 
     async fn voice_state_update(&self, ctx: Context, _old: Option<VoiceState>, new: VoiceState) {
@@ -34,7 +36,7 @@ impl EventHandler for Handler {
 
         // Early return if the user joining the channel is the bot itself
         if new.user_id == ctx.cache.current_user().id {
-            println!("Bot joined a channel");
+            info!("Bot joined a channel");
             return;
         }
 
@@ -75,32 +77,29 @@ impl EventHandler for Handler {
     }
 }
 
-#[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt::init();
-
-    let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
+#[shuttle_runtime::main]
+async fn main(
+    #[shuttle_secrets::Secrets] secret_store: SecretStore,
+) -> shuttle_serenity::ShuttleSerenity {
+    // Get the discord token set in `Secrets.toml`
+    let token = if let Some(token) = secret_store.get("DISCORD_TOKEN") {
+        token
+    } else {
+        return Err(anyhow!("'DISCORD_TOKEN' was not found").into());
+    };
 
     let intents = GatewayIntents::non_privileged()
         | GatewayIntents::MESSAGE_CONTENT
         | GatewayIntents::GUILD_VOICE_STATES;
 
-    let mut client = Client::builder(&token, intents)
+    let client = Client::builder(&token, intents)
         .event_handler(Handler)
         .register_songbird()
         .type_map_insert::<HttpKey>(HttpClient::new()) // shared HTTP client for YoutubeDl
         .await
         .expect("Err creating client");
 
-    tokio::spawn(async move {
-        let _ = client
-            .start()
-            .await
-            .map_err(|why| println!("Client ended: {:?}", why));
-    });
-
-    let _signal_err = tokio::signal::ctrl_c().await;
-    println!("Received Ctrl-C, shutting down.");
+    Ok(client.into())
 }
 
 struct TrackErrorNotifier;
