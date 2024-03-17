@@ -1,6 +1,6 @@
 {
 	"name": "Rust",
-	"image": "mcr.microsoft.com/devcontainers/rust:latest",
+	"image": "mcr.microsoft.com/devcontainers/rust:1.0.9-bullseye",
 	"postCreateCommand": "/bin/bash .devcontainer/post_create_command.sh",
 	"customizations": {
 		"vscode": {
