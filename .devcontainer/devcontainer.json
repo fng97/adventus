@@ -9,7 +9,8 @@
 				"yzhang.markdown-all-in-one",
 				"bierner.markdown-mermaid",
 				"DavidAnson.vscode-markdownlint",
-				"exiasr.hadolint"
+				"mkhl.shfmt",
+				"timonwong.shellcheck"
 			]
 		},
 		"settings": {
