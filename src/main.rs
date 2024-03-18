@@ -7,12 +7,16 @@ use serenity::{
     prelude::{GatewayIntents, TypeMapKey},
 };
 use shuttle_secrets::SecretStore;
-use songbird::events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 use songbird::input::YoutubeDl;
 use songbird::SerenityInit;
+use songbird::{
+    events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent},
+    input::Compose,
+};
 use tracing::info;
 
 const SONG_URL: &str = "https://www.youtube.com/watch?v=V66PMeImkxI";
+const MAX_TRACK_DURATION: std::time::Duration = std::time::Duration::from_secs(5);
 
 struct HttpKey;
 
@@ -27,7 +31,7 @@ impl EventHandler for Handler {
         info!("{} is connected!", ready.user.name);
     }
 
-    async fn voice_state_update(&self, ctx: Context, _old: Option<VoiceState>, new: VoiceState) {
+    async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
         // Early return if there's no guild_id
         let guild_id = match new.guild_id {
             Some(guild_id) => guild_id,
@@ -40,11 +44,25 @@ impl EventHandler for Handler {
             return;
         }
 
-        // Early return if there's no channel_id
+        // Early return if there's no new channel_id
         let channel_id = match new.channel_id {
             Some(channel_id) => channel_id,
             None => return,
         };
+
+        // get old channel id, early return if not
+        let old_channel_id = match old {
+            Some(old) => match old.channel_id {
+                Some(channel_id) => channel_id,
+                None => return,
+            },
+            None => return,
+        };
+
+        // make sure old and new channel id are different
+        if old_channel_id == channel_id {
+            return;
+        }
 
         // Proceed with joining the channel and setting up the environment
         let manager = songbird::get(&ctx)
@@ -71,8 +89,24 @@ impl EventHandler for Handler {
                 .expect("Guaranteed to exist in the typemap.")
         };
 
-        // Play
+        // get source from URL
         let src = YoutubeDl::new(http_client, SONG_URL.to_string());
+
+        // check the track is less than the limit
+        let duration = match src.clone().aux_metadata().await.unwrap().duration {
+            Some(duration) => duration,
+            None => {
+                info!("Track duration is unknown");
+                return;
+            }
+        };
+
+        if duration > MAX_TRACK_DURATION {
+            info!("Track duration is too long: {:?}", duration);
+            return;
+        }
+
+        // play the source
         let _ = handler.play_input(src.clone().into());
     }
 }
