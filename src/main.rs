@@ -13,7 +13,7 @@ use songbird::{
     events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent},
     input::Compose,
 };
-use tracing::info;
+use tracing::{debug, info};
 
 const SONG_URL: &str = "https://www.youtube.com/watch?v=V66PMeImkxI";
 const MAX_TRACK_DURATION: std::time::Duration = std::time::Duration::from_secs(5);
@@ -35,33 +35,34 @@ impl EventHandler for Handler {
         // Early return if there's no guild_id
         let guild_id = match new.guild_id {
             Some(guild_id) => guild_id,
-            None => return,
+            None => {
+                debug!("Non-guild voice state update received. Ignoring.");
+                return;
+            }
         };
 
         // Early return if the user joining the channel is the bot itself
         if new.user_id == ctx.cache.current_user().id {
-            info!("Bot joined a channel");
+            debug!("State update is for the bot itself. Ignoring.");
             return;
         }
 
         // Early return if there's no new channel_id
         let channel_id = match new.channel_id {
             Some(channel_id) => channel_id,
-            None => return,
+            None => {
+                debug!("User left the channel. Ignoring.");
+                return;
+            }
         };
 
-        // get old channel id, early return if not
-        let old_channel_id = match old {
-            Some(old) => match old.channel_id {
-                Some(channel_id) => channel_id,
-                None => return,
-            },
-            None => return,
-        };
-
-        // make sure old and new channel id are different
-        if old_channel_id == channel_id {
-            return;
+        if let Some(old) = old {
+            if let Some(old_channel_id) = old.channel_id {
+                if old_channel_id == channel_id {
+                    debug!("State change within same channel. Ignoring.");
+                    return;
+                }
+            }
         }
 
         // Proceed with joining the channel and setting up the environment
