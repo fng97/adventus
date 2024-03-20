@@ -2,6 +2,9 @@
 	"name": "Rust",
 	"image": "mcr.microsoft.com/devcontainers/rust:1.0.9-bullseye",
 	"postCreateCommand": "/bin/bash .devcontainer/post_create_command.sh",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+	},
 	"customizations": {
 		"vscode": {
 			"extensions": [
