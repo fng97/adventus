@@ -6,7 +6,7 @@ use serenity::{
     model::{gateway::Ready, voice::VoiceState},
     prelude::{GatewayIntents, TypeMapKey},
 };
-use shuttle_secrets::SecretStore;
+use shuttle_runtime::SecretStore;
 use songbird::input::YoutubeDl;
 use songbird::SerenityInit;
 use songbird::{
@@ -114,7 +114,7 @@ impl EventHandler for Handler {
 
 #[shuttle_runtime::main]
 async fn main(
-    #[shuttle_secrets::Secrets] secret_store: SecretStore,
+    #[shuttle_runtime::Secrets] secret_store: SecretStore,
 ) -> shuttle_serenity::ShuttleSerenity {
     // Get the discord token set in `Secrets.toml`
     let token = if let Some(token) = secret_store.get("DISCORD_TOKEN") {
