@@ -5,6 +5,10 @@
 	"features": {
 		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
 	},
+	"remoteEnv": {
+		"POSTGRES_HOST": "host.docker.internal",
+		"DATABASE_URL": "postgres://postgres:password@host.docker.internal:5432/discord"
+	},
 	"customizations": {
 		"vscode": {
 			"extensions": [
