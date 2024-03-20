@@ -4,6 +4,8 @@ pkgs.mkShell {
   buildInputs = [
     pkgs.rustc # rust deps
     pkgs.cargo # rust deps
+    pkgs.clippy # rust deps
+    pkgs.rustPlatform.rust-src
 
     pkgs.cargo-shuttle # infrastructure
 
