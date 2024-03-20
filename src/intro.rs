@@ -1,3 +1,34 @@
+use crate::player::play;
+use reqwest::Client as HttpClient;
+use serenity::{
+    all::{ChannelId, GuildId, UserId},
+    client::Context,
+    prelude::TypeMapKey,
+};
+
+pub struct HttpKey;
+
+impl TypeMapKey for HttpKey {
+    type Value = HttpClient;
+}
+
+const SONG_URL: &str = "https://www.youtube.com/watch?v=V66PMeImkxI";
+const _MAX_TRACK_DURATION: std::time::Duration = std::time::Duration::from_secs(5);
+
+async fn get_url_for_user_and_guild(
+    _ctx: &Context,
+    _user_id: UserId,
+    _guild_id: GuildId,
+) -> Option<String> {
+    Some(SONG_URL.to_string())
+}
+
+pub async fn play_intro(ctx: &Context, guild_id: GuildId, channel_id: ChannelId, user_id: UserId) {
+    if let Some(url) = get_url_for_user_and_guild(ctx, user_id, guild_id).await {
+        play(ctx, guild_id, channel_id, &url).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::Utc;

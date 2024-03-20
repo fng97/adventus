@@ -1,5 +1,5 @@
 use crate::event_handler::Handler;
-use crate::event_handler::HttpKey;
+use crate::player::HttpKey;
 use reqwest::Client as HttpClient;
 use serenity::{client::Client, prelude::GatewayIntents};
 use songbird::SerenityInit;
