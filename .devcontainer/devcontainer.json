@@ -3,7 +3,14 @@
 	"image": "mcr.microsoft.com/devcontainers/rust:1.0.9-bullseye",
 	"postCreateCommand": "/bin/bash .devcontainer/post_create_command.sh",
 	"features": {
-		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
+		"ghcr.io/devcontainers-contrib/features/yt-dlp:2": {},
+		"ghcr.io/devcontainers-contrib/features/shfmt:1": {},
+		"ghcr.io/lee-orr/rusty-dev-containers/cargo-binstall:0": {
+			"packages": [
+				"sqlx-cli"
+			]
+		}
 	},
 	"remoteEnv": {
 		"POSTGRES_HOST": "host.docker.internal",
@@ -17,7 +24,9 @@
 				"bierner.markdown-mermaid",
 				"DavidAnson.vscode-markdownlint",
 				"mkhl.shfmt",
-				"timonwong.shellcheck"
+				"timonwong.shellcheck",
+				"mtxr.sqltools",
+				"mtxr.sqltools-driver-pg"
 			]
 		},
 		"settings": {
