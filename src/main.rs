@@ -1,10 +1,15 @@
 use adventus::app;
 use anyhow::anyhow;
 use shuttle_runtime::SecretStore;
+use std::env;
 
 #[shuttle_runtime::main]
 async fn main(
     #[shuttle_runtime::Secrets] secret_store: SecretStore,
+    #[shuttle_shared_db::Postgres(
+        local_uri = &env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://postgres:password@localhost:5432/discord".to_string())
+    )]
+    pool: sqlx::PgPool,
 ) -> shuttle_serenity::ShuttleSerenity {
     let token = if let Some(token) = secret_store.get("DISCORD_TOKEN") {
         token
@@ -12,5 +17,5 @@ async fn main(
         return Err(anyhow!("'DISCORD_TOKEN' was not found").into());
     };
 
-    Ok(app::build(token).await.into())
+    Ok(app::build(token, pool).await.into())
 }

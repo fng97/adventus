@@ -5,9 +5,12 @@ use serenity::{
     client::{Context, EventHandler},
     model::{gateway::Ready, id::UserId, voice::VoiceState},
 };
+use sqlx::PgPool;
 use tracing::{debug, info};
 
-pub struct Handler;
+pub struct Handler {
+    pub database: PgPool,
+}
 
 fn user_joined_channel(
     ctx: &Context,
@@ -57,7 +60,7 @@ impl EventHandler for Handler {
 
     async fn voice_state_update(&self, ctx: Context, old: Option<VoiceState>, new: VoiceState) {
         if let Some((channel_id, guild_id, user_id)) = user_joined_channel(&ctx, old, new) {
-            play_intro(&ctx, guild_id, channel_id, user_id).await;
+            play_intro(&ctx, guild_id, channel_id, user_id, &self.database).await;
         }
     }
 }

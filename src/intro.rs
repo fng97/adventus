@@ -1,37 +1,58 @@
 use crate::player::play;
-use reqwest::Client as HttpClient;
 use serenity::{
     all::{ChannelId, GuildId, UserId},
     client::Context,
-    prelude::TypeMapKey,
 };
+use sqlx::PgPool;
+use tracing::{debug, info};
 
-pub struct HttpKey;
-
-impl TypeMapKey for HttpKey {
-    type Value = HttpClient;
-}
-
-const SONG_URL: &str = "https://www.youtube.com/watch?v=V66PMeImkxI";
 const _MAX_TRACK_DURATION: std::time::Duration = std::time::Duration::from_secs(5);
 
-async fn get_url_for_user_and_guild(
-    _ctx: &Context,
-    _user_id: UserId,
-    _guild_id: GuildId,
+pub async fn get_url_for_user_and_guild(
+    user_id: u64,
+    guild_id: u64,
+    pool: &PgPool,
 ) -> Option<String> {
-    Some(SONG_URL.to_string())
+    let user_id = user_id as i64;
+    let guild_id = guild_id as i64;
+
+    match sqlx::query!(
+        r#"
+        SELECT yt_url
+        FROM intros
+        WHERE user_snowflake = $1 AND guild_snowflake = $2
+        "#,
+        user_id,
+        guild_id,
+    )
+    .fetch_one(pool)
+    .await
+    {
+        Ok(record) => Some(record.yt_url),
+        Err(_) => {
+            debug!("No intro found for user {} in guild {}", user_id, guild_id);
+            None
+        }
+    }
 }
 
-pub async fn play_intro(ctx: &Context, guild_id: GuildId, channel_id: ChannelId, user_id: UserId) {
-    if let Some(url) = get_url_for_user_and_guild(ctx, user_id, guild_id).await {
+pub async fn play_intro(
+    ctx: &Context,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+    user_id: UserId,
+    pool: &PgPool,
+) {
+    if let Some(url) = get_url_for_user_and_guild(user_id.get(), guild_id.get(), pool).await {
         play(ctx, guild_id, channel_id, &url).await;
+    } else {
+        info!("No intro found for user {} in guild {}", user_id, guild_id);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
+    use crate::intro::get_url_for_user_and_guild;
     use sqlx::{Connection, Executor, PgConnection, PgPool};
     use std::env;
     use uuid::Uuid;
@@ -95,13 +116,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_test() {
+    async fn gets_url_for_user_and_guild() {
         let connection_pool = get_test_database_pgpool().await;
 
         // add user, guild, and url to database
 
-        const USER_SNOWFLAKE: i64 = 123456789123456789;
-        const GUILD_SNOWFLAKE: i64 = 987654321987654321;
+        const USER_SNOWFLAKE: u64 = 123456789123456789;
+        const GUILD_SNOWFLAKE: u64 = 987654321987654321;
         const URL: &str = "https://example.com";
 
         sqlx::query!(
@@ -109,8 +130,8 @@ mod tests {
             INSERT INTO intros (user_snowflake, guild_snowflake, yt_url)
             VALUES ($1, $2, $3)
             "#,
-            USER_SNOWFLAKE,
-            GUILD_SNOWFLAKE,
+            USER_SNOWFLAKE as i64,
+            GUILD_SNOWFLAKE as i64,
             URL
         )
         .execute(&connection_pool)
@@ -119,68 +140,12 @@ mod tests {
 
         // get record from database
 
-        let record = sqlx::query!(
-            r#"
-            SELECT user_snowflake, guild_snowflake, yt_url, set_at
-            FROM intros
-            WHERE user_snowflake = $1 AND guild_snowflake = $2
-            "#,
-            USER_SNOWFLAKE,
-            GUILD_SNOWFLAKE
-        )
-        .fetch_one(&connection_pool)
-        .await
-        .unwrap();
+        let expected_url =
+            get_url_for_user_and_guild(USER_SNOWFLAKE, GUILD_SNOWFLAKE, &connection_pool)
+                .await
+                .unwrap();
 
         // assertions
-        assert_eq!(record.user_snowflake, USER_SNOWFLAKE);
-        assert_eq!(record.guild_snowflake, GUILD_SNOWFLAKE);
-        assert_eq!(record.yt_url, URL);
-        assert_ne!(record.set_at, Utc::now());
-    }
-
-    #[tokio::test]
-    async fn test_test2() {
-        let connection_pool = get_test_database_pgpool().await;
-
-        // add user, guild, and url to database
-
-        const USER_SNOWFLAKE: i64 = 123456789123456789;
-        const GUILD_SNOWFLAKE: i64 = 987654321987654321;
-        const URL: &str = "https://example.com";
-
-        sqlx::query!(
-            r#"
-            INSERT INTO intros (user_snowflake, guild_snowflake, yt_url)
-            VALUES ($1, $2, $3)
-            "#,
-            USER_SNOWFLAKE,
-            GUILD_SNOWFLAKE,
-            URL
-        )
-        .execute(&connection_pool)
-        .await
-        .unwrap();
-
-        // get record from database
-
-        let record = sqlx::query!(
-            r#"
-            SELECT user_snowflake, guild_snowflake, yt_url, set_at
-            FROM intros
-            WHERE user_snowflake = $1 AND guild_snowflake = $2
-            "#,
-            USER_SNOWFLAKE,
-            GUILD_SNOWFLAKE
-        )
-        .fetch_one(&connection_pool)
-        .await
-        .unwrap();
-
-        // assertions
-        assert_eq!(record.user_snowflake, USER_SNOWFLAKE);
-        assert_eq!(record.guild_snowflake, GUILD_SNOWFLAKE);
-        assert_eq!(record.yt_url, URL);
-        assert_ne!(record.set_at, Utc::now());
+        assert_eq!(expected_url, URL);
     }
 }

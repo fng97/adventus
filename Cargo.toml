@@ -11,11 +11,14 @@ symphonia = { features = ["aac", "mp3", "isomp4", "alac"], version = "0.5.2" }
 shuttle-runtime = "0.42.0"
 shuttle-secrets = "0.42.0"
 shuttle-serenity = "0.42.0"
+shuttle-shared-db = { version = "0.42.0", features = ["postgres", "sqlx"] }
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 tracing-futures = "0.2.5"
 config = "0.14.0"
 uuid = { version = "1.8.0", features = ["v4"] }
+serde = { version = "1.0.97", features = ["derive"] }
+serde_json = "1.0.97"
 chrono = "0.4.35"
 
 [dependencies.serenity]
@@ -42,9 +45,6 @@ features = [
     "migrate",
 ]
 
-[dependencies.serde]
-version = "1.0.197"
-features = ["derive"]
 
 [dependencies.tokio]
 version = "1.36.0"
