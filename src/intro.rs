@@ -4,9 +4,14 @@ use serenity::{
     client::Context,
 };
 use sqlx::PgPool;
-use tracing::{debug, info};
+use tracing::debug;
 
 const _MAX_TRACK_DURATION: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(sqlx::FromRow)]
+struct IntroUrl {
+    yt_url: String,
+}
 
 pub async fn get_url_for_user_and_guild(
     user_id: u64,
@@ -16,7 +21,11 @@ pub async fn get_url_for_user_and_guild(
     let user_id = user_id as i64;
     let guild_id = guild_id as i64;
 
-    match sqlx::query!(
+    // shuttle doesn't support compile-time sqlx macros yet so we'll just use
+    // them for testing. Must use string literal so can't abstract query.
+    #[cfg(test)]
+    let query = sqlx::query_as!(
+        IntroUrl,
         r#"
         SELECT yt_url
         FROM intros
@@ -24,16 +33,20 @@ pub async fn get_url_for_user_and_guild(
         "#,
         user_id,
         guild_id,
+    );
+
+    #[cfg(not(test))]
+    let query = sqlx::query_as::<_, IntroUrl>(
+        r#"
+        SELECT yt_url
+        FROM intros
+        WHERE user_snowflake = $1 AND guild_snowflake = $2
+        "#,
     )
-    .fetch_one(pool)
-    .await
-    {
-        Ok(record) => Some(record.yt_url),
-        Err(_) => {
-            debug!("No intro found for user {} in guild {}", user_id, guild_id);
-            None
-        }
-    }
+    .bind(user_id)
+    .bind(guild_id);
+
+    query.fetch_one(pool).await.ok().map(|url| url.yt_url)
 }
 
 pub async fn play_intro(
@@ -46,7 +59,7 @@ pub async fn play_intro(
     if let Some(url) = get_url_for_user_and_guild(user_id.get(), guild_id.get(), pool).await {
         play(ctx, guild_id, channel_id, &url).await;
     } else {
-        info!("No intro found for user {} in guild {}", user_id, guild_id);
+        debug!("No intro found for user {} in guild {}", user_id, guild_id);
     }
 }
 
@@ -57,56 +70,28 @@ mod tests {
     use std::env;
     use uuid::Uuid;
 
-    pub struct TestDatabaseSettings {
-        pub username: String,
-        pub password: String,
-        pub port: u16,
-        pub host: String,
-        pub database_name: String,
-    }
+    async fn get_test_database() -> PgPool {
+        let connection_string_without_db = format!(
+            "postgres://postgres:password@{}:5432",
+            env::var("POSTGRES_HOST").unwrap_or_else(|_| "localhost".to_string())
+        );
+        let database_name = Uuid::new_v4().to_string(); // unique db for each test
 
-    impl TestDatabaseSettings {
-        pub fn connection_string_without_db(&self) -> String {
-            format!(
-                "postgres://{}:{}@{}:{}",
-                self.username, self.password, self.host, self.port
-            )
-        }
-
-        pub fn connection_string(&self) -> String {
-            format!(
-                "{}/{}",
-                self.connection_string_without_db(),
-                self.database_name
-            )
-        }
-    }
-
-    pub async fn get_test_database_pgpool() -> PgPool {
-        let test_database_settings = TestDatabaseSettings {
-            username: "postgres".to_string(),
-            password: "password".to_string(),
-            port: 5432,
-            host: env::var("POSTGRES_HOST").unwrap_or_else(|_| "localhost".to_string()),
-            database_name: Uuid::new_v4().to_string(), // unique db for each test
-        };
-
-        configure_database(&test_database_settings).await
-    }
-
-    async fn configure_database(config: &TestDatabaseSettings) -> PgPool {
         // Create database
-        let _ = PgConnection::connect(&config.connection_string_without_db())
+        let _ = PgConnection::connect(&connection_string_without_db)
             .await
             .expect("Failed to connect to Postgres")
-            .execute(format!(r#"CREATE DATABASE "{}";"#, config.database_name).as_str())
+            .execute(format!(r#"CREATE DATABASE "{}";"#, database_name).as_str())
             .await
             .expect("Failed to create database.");
 
+        let connection_string = format!("{}/{}", connection_string_without_db, database_name);
+
         // Migrate database
-        let connection_pool = PgPool::connect(&config.connection_string())
+        let connection_pool = PgPool::connect(&connection_string)
             .await
             .expect("Failed to connect to Postgres.");
+
         sqlx::migrate!("./migrations")
             .run(&connection_pool)
             .await
@@ -117,7 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn gets_url_for_user_and_guild() {
-        let connection_pool = get_test_database_pgpool().await;
+        let connection_pool = get_test_database().await;
 
         // add user, guild, and url to database
 
