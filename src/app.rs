@@ -1,3 +1,4 @@
+use crate::database::migrate;
 use crate::event_handler::Handler;
 use crate::player::HttpKey;
 use reqwest::Client as HttpClient;
@@ -10,10 +11,7 @@ pub async fn build(discord_token: String, pool: PgPool) -> Client {
         | GatewayIntents::MESSAGE_CONTENT
         | GatewayIntents::GUILD_VOICE_STATES;
 
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .expect("Failed to migrate the database");
+    migrate(&pool).await;
 
     let handler = Handler { database: pool };
 

@@ -6,18 +6,12 @@ use serenity::{
 use sqlx::PgPool;
 use tracing::debug;
 
-const _MAX_TRACK_DURATION: std::time::Duration = std::time::Duration::from_secs(5);
-
 #[derive(sqlx::FromRow)]
 struct IntroUrl {
     yt_url: String,
 }
 
-pub async fn get_url_for_user_and_guild(
-    user_id: u64,
-    guild_id: u64,
-    pool: &PgPool,
-) -> Option<String> {
+async fn get_url_for_user_and_guild(user_id: u64, guild_id: u64, pool: &PgPool) -> Option<String> {
     let user_id = user_id as i64;
     let guild_id = guild_id as i64;
 
@@ -65,56 +59,23 @@ pub async fn play_intro(
 
 #[cfg(test)]
 mod tests {
-    use crate::intro::get_url_for_user_and_guild;
-    use sqlx::{Connection, Executor, PgConnection, PgPool};
-    use std::env;
-    use uuid::Uuid;
-
-    async fn get_test_database() -> PgPool {
-        let connection_string_without_db = format!(
-            "postgres://postgres:password@{}:5432",
-            env::var("POSTGRES_HOST").unwrap_or_else(|_| "localhost".to_string())
-        );
-        let database_name = Uuid::new_v4().to_string(); // unique db for each test
-
-        // Create database
-        let _ = PgConnection::connect(&connection_string_without_db)
-            .await
-            .expect("Failed to connect to Postgres")
-            .execute(format!(r#"CREATE DATABASE "{}";"#, database_name).as_str())
-            .await
-            .expect("Failed to create database.");
-
-        let connection_string = format!("{}/{}", connection_string_without_db, database_name);
-
-        // Migrate database
-        let connection_pool = PgPool::connect(&connection_string)
-            .await
-            .expect("Failed to connect to Postgres.");
-
-        sqlx::migrate!("./migrations")
-            .run(&connection_pool)
-            .await
-            .expect("Failed to migrate the database");
-
-        connection_pool
-    }
+    use super::*;
+    use crate::database::test_utils::get_test_database;
 
     #[tokio::test]
     async fn gets_url_for_user_and_guild() {
-        let connection_pool = get_test_database().await;
-
-        // add user, guild, and url to database
-
+        // arrange
         const USER_SNOWFLAKE: u64 = 123456789123456789;
         const GUILD_SNOWFLAKE: u64 = 987654321987654321;
         const URL: &str = "https://example.com";
 
+        let connection_pool = get_test_database().await;
+
         sqlx::query!(
             r#"
-            INSERT INTO intros (user_snowflake, guild_snowflake, yt_url)
-            VALUES ($1, $2, $3)
-            "#,
+                INSERT INTO intros (user_snowflake, guild_snowflake, yt_url)
+                VALUES ($1, $2, $3)
+                "#,
             USER_SNOWFLAKE as i64,
             GUILD_SNOWFLAKE as i64,
             URL
@@ -123,14 +84,14 @@ mod tests {
         .await
         .unwrap();
 
-        // get record from database
+        // act
 
         let expected_url =
             get_url_for_user_and_guild(USER_SNOWFLAKE, GUILD_SNOWFLAKE, &connection_pool)
                 .await
                 .unwrap();
 
-        // assertions
+        // assert
         assert_eq!(expected_url, URL);
     }
 }
