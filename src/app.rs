@@ -1,5 +1,5 @@
 use crate::database::migrate;
-use crate::event_handler::Handler;
+use crate::handlers::Handler;
 use crate::player::HttpKey;
 use reqwest::Client as HttpClient;
 use serenity::{client::Client, prelude::GatewayIntents};

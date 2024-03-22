@@ -1,4 +1,4 @@
-use crate::voice_handler::TrackErrorNotifier;
+use crate::handlers::TrackErrorNotifier;
 use reqwest::Client as HttpClient;
 use serenity::{
     all::{ChannelId, GuildId},
