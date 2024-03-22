@@ -11,6 +11,8 @@
   - add postgres (sqlx) database to shuttle project
 - check for unused dependencies
 - PR to zero2prod for double quoting (shellcheck warnings)
+- issue asking if they want a dev container
+- pin versions so dev container is faster to build
 
 ## Future Improvements
 
