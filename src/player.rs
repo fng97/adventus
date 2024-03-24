@@ -16,7 +16,13 @@ impl TypeMapKey for HttpKey {
 }
 
 // TODO: Add error handling
-pub async fn play(ctx: &Context, guild_id: GuildId, channel_id: ChannelId, yt_url: &str) {
+pub async fn play(
+    ctx: &Context,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+    yt_url: &str,
+    http_client: &reqwest::Client,
+) {
     // Proceed with joining the channel and setting up the environment
     let manager = songbird::get(ctx)
         .await
@@ -34,16 +40,8 @@ pub async fn play(ctx: &Context, guild_id: GuildId, channel_id: ChannelId, yt_ur
     // Attach an event handler to see notifications of all track errors.
     handler.add_global_event(TrackEvent::Error.into(), TrackErrorNotifier);
 
-    // Get the HTTP client, required by YoutubeDl
-    let http_client = {
-        let data = ctx.data.read().await;
-        data.get::<HttpKey>()
-            .cloned()
-            .expect("Guaranteed to exist in the typemap.")
-    };
-
     // get source from URL
-    let src = YoutubeDl::new(http_client, yt_url.to_string());
+    let src = YoutubeDl::new(http_client.clone(), yt_url.to_string());
 
     let _ = handler.play_only_input(src.clone().into());
 }

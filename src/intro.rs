@@ -1,17 +1,46 @@
-use crate::player::play;
 use serenity::{
-    all::{ChannelId, GuildId, UserId},
+    all::{ChannelId, GuildId, UserId, VoiceState},
     client::Context,
 };
 use sqlx::PgPool;
 use tracing::debug;
+
+pub fn user_joined_voice(
+    ctx: &Context,
+    old: &Option<VoiceState>,
+    new: &VoiceState,
+) -> Option<(ChannelId, GuildId, UserId)> {
+    if new.user_id == ctx.cache.current_user().id {
+        debug!("Bot joined the channel. Ignoring.");
+        return None;
+    }
+
+    let guild_id = new.guild_id?;
+    let channel_id = new.channel_id?;
+
+    if old
+        .as_ref()
+        .and_then(|o| o.channel_id)
+        .map(|old_channel_id| old_channel_id == channel_id)
+        .unwrap_or(false)
+    {
+        debug!("State change within same channel. Ignoring.");
+        return None;
+    }
+
+    Some((channel_id, guild_id, new.user_id))
+}
 
 #[derive(sqlx::FromRow)]
 struct IntroUrl {
     yt_url: String,
 }
 
-async fn get_url_for_user_and_guild(user_id: u64, guild_id: u64, pool: &PgPool) -> Option<String> {
+pub async fn get_url_for_user_and_guild(
+    user_id: u64,
+    guild_id: u64,
+    pool: &PgPool,
+) -> Option<String> {
     let user_id = user_id as i64;
     let guild_id = guild_id as i64;
 
@@ -41,40 +70,6 @@ async fn get_url_for_user_and_guild(user_id: u64, guild_id: u64, pool: &PgPool) 
     .bind(guild_id);
 
     query.fetch_one(pool).await.ok().map(|url| url.yt_url)
-}
-
-pub async fn set_intro(guild_id: GuildId, user_id: UserId, url: String, pool: &PgPool) {
-    let user_id = user_id.get() as i64;
-    let guild_id = guild_id.get() as i64;
-
-    sqlx::query!(
-        r#"
-        INSERT INTO intros (user_snowflake, guild_snowflake, yt_url)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_snowflake, guild_snowflake)
-        DO UPDATE SET yt_url = $3
-        "#,
-        user_id,
-        guild_id,
-        url
-    )
-    .execute(pool)
-    .await
-    .unwrap();
-}
-
-pub async fn play_intro(
-    ctx: &Context,
-    guild_id: GuildId,
-    channel_id: ChannelId,
-    user_id: UserId,
-    pool: &PgPool,
-) {
-    if let Some(url) = get_url_for_user_and_guild(user_id.get(), guild_id.get(), pool).await {
-        play(ctx, guild_id, channel_id, &url).await;
-    } else {
-        debug!("No intro found for user {} in guild {}", user_id, guild_id);
-    }
 }
 
 #[cfg(test)]
