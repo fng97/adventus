@@ -1,13 +1,13 @@
 use crate::intro::play_intro;
+
 use serenity::{
     all::{ChannelId, GuildId},
     async_trait,
     client::{Context, EventHandler},
     model::{gateway::Ready, id::UserId, voice::VoiceState},
 };
-use songbird::events::{Event, EventContext, EventHandler as VoiceEventHandler};
 use sqlx::PgPool;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 pub struct Handler {
     pub database: PgPool,
@@ -49,24 +49,5 @@ impl EventHandler for Handler {
         if let Some((channel_id, guild_id, user_id)) = user_joined_channel(&ctx, old, new) {
             play_intro(&ctx, guild_id, channel_id, user_id, &self.database).await;
         }
-    }
-}
-
-pub struct TrackErrorNotifier;
-
-#[async_trait]
-impl VoiceEventHandler for TrackErrorNotifier {
-    async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
-        if let EventContext::Track(track_list) = ctx {
-            for (state, handle) in *track_list {
-                warn!(
-                    "Track {:?} encountered an error: {:?}",
-                    handle.uuid(),
-                    state.playing
-                );
-            }
-        }
-
-        None
     }
 }
