@@ -43,6 +43,26 @@ async fn get_url_for_user_and_guild(user_id: u64, guild_id: u64, pool: &PgPool) 
     query.fetch_one(pool).await.ok().map(|url| url.yt_url)
 }
 
+pub async fn set_intro(guild_id: GuildId, user_id: UserId, url: String, pool: &PgPool) {
+    let user_id = user_id.get() as i64;
+    let guild_id = guild_id.get() as i64;
+
+    sqlx::query!(
+        r#"
+        INSERT INTO intros (user_snowflake, guild_snowflake, yt_url)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_snowflake, guild_snowflake)
+        DO UPDATE SET yt_url = $3
+        "#,
+        user_id,
+        guild_id,
+        url
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 pub async fn play_intro(
     ctx: &Context,
     guild_id: GuildId,
