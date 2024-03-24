@@ -45,9 +45,7 @@ pub async fn play(ctx: &Context, guild_id: GuildId, channel_id: ChannelId, yt_ur
     // get source from URL
     let src = YoutubeDl::new(http_client, yt_url.to_string());
 
-    // play the source
-    // TODO: try play_only_input instead
-    let _ = handler.play_input(src.clone().into());
+    let _ = handler.play_only_input(src.clone().into());
 }
 
 pub async fn get_yt_track_duration(
