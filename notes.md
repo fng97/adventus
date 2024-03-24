@@ -2,6 +2,9 @@
 
 ## Todos
 
+- add non-test queries after sqlx macros
+- add disconnecting after 30s of inactivity
+- add dice roller
 - add configuration crate, remove hard-coded values
 - add proper error handling
 - add logging via instrument macros
@@ -10,6 +13,7 @@
   - validate URL
   - add postgres (sqlx) database to shuttle project
 - check for unused dependencies
+- dependabot
 - PR to zero2prod for double quoting (shellcheck warnings)
 - issue asking if they want a dev container
 - pin versions so dev container is faster to build
