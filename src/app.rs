@@ -1,5 +1,5 @@
 use crate::database_setup::migrate;
-use crate::intro::{get_url_for_user_and_guild, user_joined_voice};
+use crate::intro::{get_url_for_user_and_guild, set_url_for_user_and_guild, user_joined_voice};
 use crate::voice::get_yt_track_duration;
 use crate::voice::play;
 
@@ -60,20 +60,13 @@ pub async fn set_intro(
         }
     };
 
-    sqlx::query!(
-        r#"
-        INSERT INTO intros (user_snowflake, guild_snowflake, yt_url)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_snowflake, guild_snowflake)
-        DO UPDATE SET yt_url = EXCLUDED.yt_url
-        "#,
-        user_id.get() as i64,
-        guild_id.get() as i64,
+    set_url_for_user_and_guild(
+        user_id.get(),
+        guild_id.get(),
         url.as_str(),
+        &ctx.data().database,
     )
-    .execute(&ctx.data().database)
-    .await
-    .unwrap();
+    .await?;
 
     ctx.say("Your intro sound has been set!").await?;
 

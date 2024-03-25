@@ -72,13 +72,51 @@ pub async fn get_url_for_user_and_guild(
     query.fetch_one(pool).await.ok().map(|url| url.yt_url)
 }
 
+pub async fn set_url_for_user_and_guild(
+    user_id: u64,
+    guild_id: u64,
+    url: &str,
+    pool: &PgPool,
+) -> Result<(), sqlx::Error> {
+    let user_id = user_id as i64;
+    let guild_id = guild_id as i64;
+
+    #[cfg(test)]
+    let query = sqlx::query!(
+        r#"
+        INSERT INTO intros (user_snowflake, guild_snowflake, yt_url)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_snowflake, guild_snowflake)
+        DO UPDATE SET yt_url = EXCLUDED.yt_url
+        "#,
+        user_id,
+        guild_id,
+        url,
+    );
+
+    #[cfg(not(test))]
+    let query = sqlx::query(
+        r#"
+        INSERT INTO intros (user_snowflake, guild_snowflake, yt_url)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_snowflake, guild_snowflake)
+        DO UPDATE SET yt_url = EXCLUDED.yt_url
+        "#,
+    )
+    .bind(user_id)
+    .bind(guild_id)
+    .bind(url);
+
+    query.execute(pool).await.map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::database_setup::test_utils::get_test_database;
 
     #[tokio::test]
-    async fn gets_url_for_user_and_guild() {
+    async fn get_url_returns_set_url() {
         // arrange
         const USER_SNOWFLAKE: u64 = 123456789123456789;
         const GUILD_SNOWFLAKE: u64 = 987654321987654321;
@@ -86,18 +124,9 @@ mod tests {
 
         let connection_pool = get_test_database().await;
 
-        sqlx::query!(
-            r#"
-                INSERT INTO intros (user_snowflake, guild_snowflake, yt_url)
-                VALUES ($1, $2, $3)
-                "#,
-            USER_SNOWFLAKE as i64,
-            GUILD_SNOWFLAKE as i64,
-            URL
-        )
-        .execute(&connection_pool)
-        .await
-        .unwrap();
+        set_url_for_user_and_guild(USER_SNOWFLAKE, GUILD_SNOWFLAKE, URL, &connection_pool)
+            .await
+            .unwrap();
 
         // act
 
