@@ -75,7 +75,7 @@ pub async fn get_url_for_user_and_guild(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::test_utils::get_test_database;
+    use crate::database_setup::test_utils::get_test_database;
 
     #[tokio::test]
     async fn gets_url_for_user_and_guild() {

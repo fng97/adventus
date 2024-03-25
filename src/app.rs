@@ -1,4 +1,4 @@
-use crate::database::migrate;
+use crate::database_setup::migrate;
 use crate::intro::{get_url_for_user_and_guild, user_joined_voice};
 use crate::voice::get_yt_track_duration;
 use crate::voice::play;

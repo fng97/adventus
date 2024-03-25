@@ -1,5 +1,5 @@
 use adventus::app;
-use adventus::database::local_database_url;
+use adventus::database_setup::local_database_url;
 use anyhow::anyhow;
 use shuttle_runtime::SecretStore;
 
