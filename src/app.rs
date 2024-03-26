@@ -1,7 +1,7 @@
 use crate::database_setup::migrate;
-use crate::intro::{get_url_for_user_and_guild, set_url_for_user_and_guild};
-use crate::voice::get_yt_track_duration;
-use crate::voice::play;
+use crate::introductions::queries::{get_url_for_user_and_guild, set_url_for_user_and_guild};
+use crate::introductions::voice::get_yt_track_duration;
+use crate::introductions::voice::play;
 
 use poise::serenity_prelude as serenity;
 use serenity::all::{ChannelId, GuildId, UserId, VoiceState};

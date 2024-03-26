@@ -1,19 +1,11 @@
-use reqwest::Client as HttpClient;
 use serenity::{
     all::{ChannelId, GuildId},
     async_trait,
     client::Context,
-    prelude::TypeMapKey,
 };
 use songbird::events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
 use songbird::input::{Compose, YoutubeDl};
 use tracing::warn;
-
-pub struct HttpKey;
-
-impl TypeMapKey for HttpKey {
-    type Value = HttpClient;
-}
 
 // TODO: Add error handling
 pub async fn play(

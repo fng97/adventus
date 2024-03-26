@@ -17,6 +17,7 @@
 - PR to zero2prod for double quoting (shellcheck warnings)
 - issue asking if they want a dev container
 - pin versions so dev container is faster to build
+- start the database from rust when testing or running locally
 
 ## Future Improvements
 
