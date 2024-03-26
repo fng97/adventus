@@ -25,6 +25,7 @@ dependencies = [
  "chrono",
  "config",
  "poise",
+ "rand",
  "reqwest",
  "serde",
  "serde_json",

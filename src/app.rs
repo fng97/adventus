@@ -3,7 +3,9 @@ use crate::introductions::queries::{get_url_for_user_and_guild, set_url_for_user
 use crate::introductions::voice::get_yt_track_duration;
 use crate::introductions::voice::play;
 
+use ::serenity::all::Mentionable;
 use poise::serenity_prelude as serenity;
+use rand::Rng;
 use serenity::all::{ChannelId, GuildId, UserId, VoiceState};
 use serenity::{client::Client, prelude::GatewayIntents};
 use songbird::SerenityInit;
@@ -11,7 +13,7 @@ use sqlx::PgPool;
 use std::time::Duration;
 use tracing::debug;
 use tracing::{error, info, warn};
-use url::Url;
+use url::Url; // For rolling logic // Importing necessary trait for choice parameters
 
 fn user_joined_voice(
     ctx: &serenity::client::Context,
@@ -46,6 +48,44 @@ struct Data {
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
+
+/// Roll the dice!
+#[poise::command(slash_command)]
+pub async fn roll(
+    ctx: Context<'_>,
+    #[description = "Number of sides of the dice."]
+    #[min = 2]
+    #[max = 100]
+    sides: u8,
+    #[description = "Number of dice to roll."]
+    #[min = 1]
+    #[max = 10]
+    rolls: Option<u8>,
+) -> Result<(), Error> {
+    const DEFAULT_NUM_ROLLS: u8 = 1;
+    let rolls = rolls.unwrap_or(DEFAULT_NUM_ROLLS);
+
+    let results: Vec<u8> = (0..rolls)
+        .map(|_| rand::thread_rng().gen_range(1..sides))
+        .collect();
+
+    // Create a string of the results to send in the message
+    let results_str = results
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    // Send the message
+    ctx.say(format!(
+        "{} rolled {}.",
+        ctx.author().mention(),
+        results_str
+    ))
+    .await?;
+
+    Ok(())
+}
 
 /// Set your intro sound from a YouTube URL.
 ///
@@ -197,7 +237,7 @@ pub async fn build(discord_token: String, pool: PgPool) -> Client {
             })
         })
         .options(poise::FrameworkOptions {
-            commands: vec![set_intro(), clear_intro()],
+            commands: vec![set_intro(), clear_intro(), roll()],
             event_handler: |ctx, event, framework, data| {
                 Box::pin(event_handler(ctx, event, framework, data))
             },
