@@ -1,15 +1,43 @@
 use crate::database_setup::migrate;
-use crate::intro::{get_url_for_user_and_guild, set_url_for_user_and_guild, user_joined_voice};
+use crate::intro::{get_url_for_user_and_guild, set_url_for_user_and_guild};
 use crate::voice::get_yt_track_duration;
 use crate::voice::play;
 
 use poise::serenity_prelude as serenity;
+use serenity::all::{ChannelId, GuildId, UserId, VoiceState};
 use serenity::{client::Client, prelude::GatewayIntents};
 use songbird::SerenityInit;
 use sqlx::PgPool;
 use std::time::Duration;
+use tracing::debug;
 use tracing::{error, info, warn};
 use url::Url;
+
+fn user_joined_voice(
+    ctx: &serenity::client::Context,
+    old: &Option<VoiceState>,
+    new: &VoiceState,
+) -> Option<(ChannelId, GuildId, UserId)> {
+    if new.user_id == ctx.cache.current_user().id {
+        debug!("Bot joined the channel. Ignoring.");
+        return None;
+    }
+
+    let guild_id = new.guild_id?;
+    let channel_id = new.channel_id?;
+
+    if old
+        .as_ref()
+        .and_then(|o| o.channel_id)
+        .map(|old_channel_id| old_channel_id == channel_id)
+        .unwrap_or(false)
+    {
+        debug!("State change within same channel. Ignoring.");
+        return None;
+    }
+
+    Some((channel_id, guild_id, new.user_id))
+}
 
 struct Data {
     pub http_client: reqwest::Client,

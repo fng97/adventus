@@ -1,35 +1,4 @@
-use serenity::{
-    all::{ChannelId, GuildId, UserId, VoiceState},
-    client::Context,
-};
 use sqlx::PgPool;
-use tracing::debug;
-
-pub fn user_joined_voice(
-    ctx: &Context,
-    old: &Option<VoiceState>,
-    new: &VoiceState,
-) -> Option<(ChannelId, GuildId, UserId)> {
-    if new.user_id == ctx.cache.current_user().id {
-        debug!("Bot joined the channel. Ignoring.");
-        return None;
-    }
-
-    let guild_id = new.guild_id?;
-    let channel_id = new.channel_id?;
-
-    if old
-        .as_ref()
-        .and_then(|o| o.channel_id)
-        .map(|old_channel_id| old_channel_id == channel_id)
-        .unwrap_or(false)
-    {
-        debug!("State change within same channel. Ignoring.");
-        return None;
-    }
-
-    Some((channel_id, guild_id, new.user_id))
-}
 
 #[derive(sqlx::FromRow)]
 struct IntroUrl {
