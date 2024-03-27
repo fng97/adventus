@@ -1,4 +1,4 @@
-use adventus::app;
+use adventus::app_builder;
 use adventus::database_setup::local_database_url;
 use anyhow::anyhow;
 use shuttle_runtime::SecretStore;
@@ -17,5 +17,5 @@ async fn main(
         return Err(anyhow!("'DISCORD_TOKEN' was not found").into());
     };
 
-    Ok(app::build(token, pool).await.into())
+    Ok(app_builder::build(token, pool).await.into())
 }

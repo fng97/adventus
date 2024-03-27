@@ -1,4 +1,4 @@
-pub mod app;
+pub mod app_builder;
 pub mod common;
 pub mod database_setup;
 pub mod handlers;
