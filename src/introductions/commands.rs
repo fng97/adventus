@@ -3,7 +3,13 @@ use crate::introductions::queries::set_url_for_user_and_guild;
 use crate::introductions::voice::get_yt_track_duration;
 
 use std::time::Duration;
-use url::Url;
+
+const YOUTUBE_URL_REGEX: &str = r"^((?:https?:)?\/\/)?((?:www|m)\.)?((?:youtube(-nocookie)?\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|live\/|v\/)?)([\w\-]+)(\S+)?$";
+
+fn youtube_url_is_valid(url: &str) -> Result<bool, regex::Error> {
+    let regex = regex::Regex::new(YOUTUBE_URL_REGEX)?;
+    Ok(regex.is_match(url))
+}
 
 /// Set your intro sound from a YouTube URL.
 ///
@@ -15,16 +21,10 @@ pub async fn set_intro(
     ctx: Context<'_>,
     #[description = "YouTube URL (video must be less than 5s long)"] url: String,
 ) -> Result<(), Error> {
-    // vaidate url
-    let url = match Url::parse(&url) {
-        Ok(url) => url,
-        Err(_) => {
-            ctx.say("Invalid URL.").await?;
-            return Ok(());
-        }
-    };
-
-    // validate youtube URL
+    if !youtube_url_is_valid(url.as_str())? {
+        ctx.say("Invalid YouTube URL.").await?;
+        return Ok(());
+    }
 
     if let Some(duration) = get_yt_track_duration(&ctx.data().http_client, url.as_str()).await {
         if duration > Duration::from_secs(5) {
@@ -87,10 +87,6 @@ pub async fn clear_intro(ctx: Context<'_>) -> Result<(), Error> {
     .await
     {
         Ok(_) => {}
-        Err(sqlx::Error::RowNotFound) => {
-            ctx.say("You don't have an intro sound set.").await?;
-            return Ok(());
-        }
         Err(e) => return Err(e.into()),
     }
 

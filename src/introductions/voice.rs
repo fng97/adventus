@@ -50,7 +50,7 @@ pub async fn get_yt_track_duration(
     }
 }
 
-pub struct TrackErrorNotifier;
+struct TrackErrorNotifier;
 
 #[async_trait]
 impl VoiceEventHandler for TrackErrorNotifier {
