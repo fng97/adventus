@@ -4,7 +4,8 @@ use crate::introductions::voice::get_yt_track_duration;
 
 use std::time::Duration;
 
-const YOUTUBE_URL_REGEX: &str = r"^((?:https?:)?\/\/)?((?:www|m)\.)?((?:youtube(-nocookie)?\.com|youtu.be))(\/(?:[\w\-]+\?v=|embed\/|live\/|v\/)?)([\w\-]+)(\S+)?$";
+const YOUTUBE_URL_REGEX: &str =
+    r"^(https?\:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)[a-zA-Z0-9_-]{11}$";
 
 fn youtube_url_is_valid(url: &str) -> Result<bool, regex::Error> {
     let regex = regex::Regex::new(YOUTUBE_URL_REGEX)?;
