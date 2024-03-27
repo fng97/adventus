@@ -3,8 +3,8 @@ use crate::introductions::queries::{get_url_for_user_and_guild, set_url_for_user
 use crate::introductions::voice::get_yt_track_duration;
 use crate::introductions::voice::play;
 
-use ::serenity::all::Mentionable;
 use poise::serenity_prelude as serenity;
+use poise::serenity_prelude::Mentionable;
 use rand::Rng;
 use serenity::all::{ChannelId, GuildId, UserId, VoiceState};
 use serenity::{client::Client, prelude::GatewayIntents};
