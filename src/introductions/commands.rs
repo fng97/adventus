@@ -1,5 +1,5 @@
 use crate::common::{Context, Error};
-use crate::introductions::queries::set_url_for_user_and_guild;
+use crate::introductions::queries::{clear_url_for_user_and_guild, set_url_for_user_and_guild};
 use crate::introductions::voice::get_yt_track_duration;
 
 use std::time::Duration;
@@ -22,6 +22,15 @@ pub async fn set_intro(
     ctx: Context<'_>,
     #[description = "YouTube URL (video must be less than 5s long)"] url: String,
 ) -> Result<(), Error> {
+    let user_id = ctx.author().id;
+    let guild_id = match ctx.guild_id() {
+        Some(guild_id) => guild_id,
+        None => {
+            ctx.say("This command can only be used in a server.")
+                .await?;
+            return Ok(());
+        }
+    };
     if !youtube_url_is_valid(url.as_str())? {
         ctx.say("Invalid YouTube URL.").await?;
         return Ok(());
@@ -36,16 +45,6 @@ pub async fn set_intro(
     } else {
         return Err("Failed to get video duration.".into());
     }
-
-    let user_id = ctx.author().id;
-    let guild_id = match ctx.guild_id() {
-        Some(guild_id) => guild_id,
-        None => {
-            ctx.say("This command can only be used in a server.")
-                .await?;
-            return Ok(());
-        }
-    };
 
     set_url_for_user_and_guild(
         user_id.get(),
@@ -76,20 +75,7 @@ pub async fn clear_intro(ctx: Context<'_>) -> Result<(), Error> {
         }
     };
 
-    match sqlx::query!(
-        r#"
-        DELETE FROM intros
-        WHERE user_snowflake = $1 AND guild_snowflake = $2
-        "#,
-        user_id.get() as i64,
-        guild_id.get() as i64,
-    )
-    .execute(&ctx.data().database)
-    .await
-    {
-        Ok(_) => {}
-        Err(e) => return Err(e.into()),
-    }
+    clear_url_for_user_and_guild(user_id.get(), guild_id.get(), &ctx.data().database).await?;
 
     ctx.say("Your intro sound has been cleared!").await?;
 

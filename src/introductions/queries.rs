@@ -76,7 +76,42 @@ pub async fn set_url_for_user_and_guild(
     .bind(guild_id)
     .bind(url);
 
-    query.execute(pool).await.map(|_| ())
+    query.execute(pool).await?;
+
+    Ok(())
+}
+
+pub async fn clear_url_for_user_and_guild(
+    user_id: u64,
+    guild_id: u64,
+    pool: &PgPool,
+) -> Result<(), sqlx::Error> {
+    let user_id = user_id as i64;
+    let guild_id = guild_id as i64;
+
+    #[cfg(test)]
+    let query = sqlx::query!(
+        r#"
+        DELETE FROM intros
+        WHERE user_snowflake = $1 AND guild_snowflake = $2
+        "#,
+        user_id,
+        guild_id,
+    );
+
+    #[cfg(not(test))]
+    let query = sqlx::query(
+        r#"
+        DELETE FROM intros
+        WHERE user_snowflake = $1 AND guild_snowflake = $2
+        "#,
+    )
+    .bind(user_id)
+    .bind(guild_id);
+
+    query.execute(pool).await?;
+
+    Ok(())
 }
 
 #[cfg(test)]
