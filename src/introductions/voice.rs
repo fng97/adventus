@@ -1,11 +1,20 @@
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use serenity::{
     all::{ChannelId, GuildId},
     async_trait,
     client::Context,
 };
-use songbird::events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent};
-use songbird::input::{Compose, YoutubeDl};
-use tracing::warn;
+use songbird::input::YoutubeDl;
+use songbird::{
+    events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent},
+    Songbird,
+};
+use tokio::{sync::Mutex, time::interval};
+use tracing::{info, warn};
 
 // TODO: Add error handling
 pub async fn play(
@@ -14,14 +23,13 @@ pub async fn play(
     channel_id: ChannelId,
     yt_url: &str,
     http_client: &reqwest::Client,
+    last_active: &tokio::sync::Mutex<std::collections::HashMap<GuildId, std::time::Instant>>,
 ) {
-    // Proceed with joining the channel and setting up the environment
     let manager = songbird::get(ctx)
         .await
         .expect("Songbird Voice client placed in at initialisation.")
         .clone();
 
-    // Attempt to join the voice channel, early return on failure
     let handler_lock = match manager.join(guild_id, channel_id).await {
         Ok(handler_lock) => handler_lock,
         Err(_) => return,
@@ -29,31 +37,21 @@ pub async fn play(
 
     let mut handler: tokio::sync::MutexGuard<'_, songbird::Call> = handler_lock.lock().await;
 
-    // Attach an event handler to see notifications of all track errors.
-    handler.add_global_event(TrackEvent::Error.into(), TrackErrorNotifier);
+    handler.add_global_event(TrackEvent::Error.into(), TrackErrorHandler);
 
-    // get source from URL
-    let src = YoutubeDl::new(http_client.clone(), yt_url.to_string());
+    let _ = handler.play_only_input(YoutubeDl::new(http_client.clone(), yt_url.to_string()).into());
 
-    let _ = handler.play_only_input(src.clone().into());
+    // update activity time - used for voice channel disconnect
+    last_active
+        .lock()
+        .await
+        .insert(guild_id, std::time::Instant::now());
 }
 
-pub async fn get_yt_track_duration(
-    http_client: &reqwest::Client,
-    yt_url: &str,
-) -> Option<std::time::Duration> {
-    let mut src = YoutubeDl::new(http_client.clone(), yt_url.to_string());
-
-    match src.aux_metadata().await {
-        Ok(metadata) => metadata.duration,
-        Err(_) => None,
-    }
-}
-
-struct TrackErrorNotifier;
+struct TrackErrorHandler;
 
 #[async_trait]
-impl VoiceEventHandler for TrackErrorNotifier {
+impl VoiceEventHandler for TrackErrorHandler {
     async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
         if let EventContext::Track(track_list) = ctx {
             for (state, handle) in *track_list {
@@ -66,5 +64,41 @@ impl VoiceEventHandler for TrackErrorNotifier {
         }
 
         None
+    }
+}
+
+pub async fn disconnect_inactive_clients(
+    songbird: Arc<Songbird>,
+    last_active: Arc<Mutex<std::collections::HashMap<GuildId, Instant>>>,
+) {
+    const CHECK_EVERY: Duration = Duration::from_secs(2);
+    const DISCONNECT_AFTER: Duration = Duration::from_secs(8);
+
+    let mut interval = interval(CHECK_EVERY);
+
+    loop {
+        interval.tick().await;
+        let now = Instant::now();
+
+        let guilds_to_disconnect: Vec<GuildId> = {
+            let last_active_guard = last_active.lock().await;
+            last_active_guard
+                .iter()
+                .filter_map(|(&guild_id, &last_active_time)| {
+                    if now.duration_since(last_active_time) > DISCONNECT_AFTER {
+                        Some(guild_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        for guild_id in guilds_to_disconnect {
+            if songbird.leave(guild_id).await.is_ok() {
+                info!("Disconnected from guild {} due to inactivity", guild_id);
+            }
+            last_active.lock().await.remove(&guild_id);
+        }
     }
 }

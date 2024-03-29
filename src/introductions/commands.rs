@@ -1,7 +1,6 @@
 use crate::common::{Context, Error};
 use crate::introductions::queries::{clear_url_for_user_and_guild, set_url_for_user_and_guild};
-use crate::introductions::voice::get_yt_track_duration;
-
+use songbird::input::{Compose, YoutubeDl};
 use std::time::Duration;
 
 const YOUTUBE_URL_REGEX: &str =
@@ -10,6 +9,18 @@ const YOUTUBE_URL_REGEX: &str =
 fn youtube_url_is_valid(url: &str) -> Result<bool, regex::Error> {
     let regex = regex::Regex::new(YOUTUBE_URL_REGEX)?;
     Ok(regex.is_match(url))
+}
+
+async fn get_yt_track_duration(
+    http_client: &reqwest::Client,
+    yt_url: &str,
+) -> Option<std::time::Duration> {
+    let mut src = YoutubeDl::new(http_client.clone(), yt_url.to_string());
+
+    match src.aux_metadata().await {
+        Ok(metadata) => metadata.duration,
+        Err(_) => None,
+    }
 }
 
 /// Set your intro sound from a YouTube URL.
@@ -22,6 +33,8 @@ pub async fn set_intro(
     ctx: Context<'_>,
     #[description = "YouTube URL (video must be less than 5s long)"] url: String,
 ) -> Result<(), Error> {
+    const MAX_INTRO_DURATION: Duration = Duration::from_secs(5);
+
     let user_id = ctx.author().id;
     let guild_id = match ctx.guild_id() {
         Some(guild_id) => guild_id,
@@ -37,7 +50,7 @@ pub async fn set_intro(
     }
 
     if let Some(duration) = get_yt_track_duration(&ctx.data().http_client, url.as_str()).await {
-        if duration > Duration::from_secs(5) {
+        if duration > MAX_INTRO_DURATION {
             ctx.say("The video must be less than 5 seconds long.")
                 .await?;
             return Ok(());

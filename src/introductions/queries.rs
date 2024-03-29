@@ -123,7 +123,7 @@ mod tests {
     const USER_SNOWFLAKE_2: u64 = 987654321987654321;
     const GUILD_SNOWFLAKE_1: u64 = 9876543219876543210;
     const GUILD_SNOWFLAKE_2: u64 = 1234567891234567890;
-    const URL_1: &str = "https://example.com";
+    const URL_1: &str = "https://example1.com";
     const URL_2: &str = "https://example2.com";
 
     #[tokio::test]
