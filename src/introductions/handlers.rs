@@ -49,7 +49,8 @@ pub async fn voice_state_update(
         }
     };
 
-    let url = match get_url_for_user_and_guild(user_id.get(), guild_id.get(), &data.database).await
+    let url = match get_url_for_user_and_guild(user_id.get(), guild_id.get(), data.database.clone())
+        .await
     {
         Some(url) => url,
         None => {
@@ -61,7 +62,7 @@ pub async fn voice_state_update(
         }
     };
 
-    play(ctx, guild_id, channel_id, &url, &data.http_client).await;
+    play(ctx, guild_id, channel_id, &url, data.http_client.clone()).await;
 
     Ok(())
 }

@@ -12,10 +12,10 @@ fn youtube_url_is_valid(url: &str) -> Result<bool, regex::Error> {
 }
 
 async fn get_yt_track_duration(
-    http_client: &reqwest::Client,
+    http_client: reqwest::Client,
     yt_url: &str,
 ) -> Option<std::time::Duration> {
-    let mut src = YoutubeDl::new(http_client.clone(), yt_url.to_string());
+    let mut src = YoutubeDl::new(http_client, yt_url.to_string());
 
     match src.aux_metadata().await {
         Ok(metadata) => metadata.duration,
@@ -49,7 +49,9 @@ pub async fn set_intro(
         return Ok(());
     }
 
-    if let Some(duration) = get_yt_track_duration(&ctx.data().http_client, url.as_str()).await {
+    if let Some(duration) =
+        get_yt_track_duration(ctx.data().http_client.clone(), url.as_str()).await
+    {
         if duration > MAX_INTRO_DURATION {
             ctx.say("The video must be less than 5 seconds long.")
                 .await?;
@@ -63,7 +65,7 @@ pub async fn set_intro(
         user_id.get(),
         guild_id.get(),
         url.as_str(),
-        &ctx.data().database,
+        ctx.data().database.clone(),
     )
     .await?;
 
@@ -78,7 +80,6 @@ pub async fn set_intro(
 /// channel. To set a new intro sound, use the `/set_intro` command.
 #[poise::command(slash_command)]
 pub async fn clear_intro(ctx: Context<'_>) -> Result<(), Error> {
-    let user_id = ctx.author().id;
     let guild_id = match ctx.guild_id() {
         Some(guild_id) => guild_id,
         None => {
@@ -88,7 +89,12 @@ pub async fn clear_intro(ctx: Context<'_>) -> Result<(), Error> {
         }
     };
 
-    clear_url_for_user_and_guild(user_id.get(), guild_id.get(), &ctx.data().database).await?;
+    clear_url_for_user_and_guild(
+        ctx.author().id.get(),
+        guild_id.get(),
+        ctx.data().database.clone(),
+    )
+    .await?;
 
     ctx.say("Your intro sound has been cleared!").await?;
 

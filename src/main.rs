@@ -1,6 +1,5 @@
 use adventus::app_builder;
 use adventus::database_setup::local_database_url;
-use anyhow::anyhow;
 use shuttle_runtime::SecretStore;
 
 #[shuttle_runtime::main]
@@ -11,11 +10,9 @@ async fn main(
     )]
     pool: sqlx::PgPool,
 ) -> shuttle_serenity::ShuttleSerenity {
-    let token = if let Some(token) = secret_store.get("DISCORD_TOKEN") {
-        token
-    } else {
-        return Err(anyhow!("'DISCORD_TOKEN' was not found").into());
-    };
+    let token = secret_store
+        .get("DISCORD_TOKEN")
+        .expect("'DISCORD_TOKEN' not found");
 
     Ok(app_builder::build(token, pool).await.into())
 }

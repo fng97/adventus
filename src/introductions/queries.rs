@@ -8,7 +8,7 @@ struct IntroUrl {
 pub async fn get_url_for_user_and_guild(
     user_id: u64,
     guild_id: u64,
-    pool: &PgPool,
+    pool: PgPool,
 ) -> Option<String> {
     let user_id = user_id as i64;
     let guild_id = guild_id as i64;
@@ -38,14 +38,14 @@ pub async fn get_url_for_user_and_guild(
     .bind(user_id)
     .bind(guild_id);
 
-    query.fetch_one(pool).await.ok().map(|url| url.yt_url)
+    query.fetch_one(&pool).await.ok().map(|url| url.yt_url)
 }
 
 pub async fn set_url_for_user_and_guild(
     user_id: u64,
     guild_id: u64,
     url: &str,
-    pool: &PgPool,
+    pool: PgPool,
 ) -> Result<(), sqlx::Error> {
     let user_id = user_id as i64;
     let guild_id = guild_id as i64;
@@ -76,7 +76,7 @@ pub async fn set_url_for_user_and_guild(
     .bind(guild_id)
     .bind(url);
 
-    query.execute(pool).await?;
+    query.execute(&pool).await?;
 
     Ok(())
 }
@@ -84,7 +84,7 @@ pub async fn set_url_for_user_and_guild(
 pub async fn clear_url_for_user_and_guild(
     user_id: u64,
     guild_id: u64,
-    pool: &PgPool,
+    pool: PgPool,
 ) -> Result<(), sqlx::Error> {
     let user_id = user_id as i64;
     let guild_id = guild_id as i64;
@@ -109,7 +109,7 @@ pub async fn clear_url_for_user_and_guild(
     .bind(user_id)
     .bind(guild_id);
 
-    query.execute(pool).await?;
+    query.execute(&pool).await?;
 
     Ok(())
 }
@@ -139,13 +139,21 @@ mod tests {
 
         for (user_snowflake, guild_snowflake, url) in test_cases {
             // act
-            set_url_for_user_and_guild(user_snowflake, guild_snowflake, url, &connection_pool)
-                .await
-                .unwrap();
-            let expected_url =
-                get_url_for_user_and_guild(user_snowflake, guild_snowflake, &connection_pool)
-                    .await
-                    .unwrap();
+            set_url_for_user_and_guild(
+                user_snowflake,
+                guild_snowflake,
+                url,
+                connection_pool.clone(),
+            )
+            .await
+            .unwrap();
+            let expected_url = get_url_for_user_and_guild(
+                user_snowflake,
+                guild_snowflake,
+                connection_pool.clone(),
+            )
+            .await
+            .unwrap();
 
             // assert
             assert_eq!(expected_url, url);
@@ -158,8 +166,12 @@ mod tests {
         let connection_pool = get_test_database().await;
 
         // act
-        let expected_url =
-            get_url_for_user_and_guild(USER_SNOWFLAKE_1, GUILD_SNOWFLAKE_1, &connection_pool).await;
+        let expected_url = get_url_for_user_and_guild(
+            USER_SNOWFLAKE_1,
+            GUILD_SNOWFLAKE_1,
+            connection_pool.clone(),
+        )
+        .await;
 
         // assert
         assert!(expected_url.is_none());
@@ -168,18 +180,31 @@ mod tests {
     #[tokio::test]
     async fn set_url_overwrites_existing_url() {
         let connection_pool = get_test_database().await;
-        set_url_for_user_and_guild(USER_SNOWFLAKE_1, GUILD_SNOWFLAKE_1, URL_1, &connection_pool)
-            .await
-            .unwrap();
-        set_url_for_user_and_guild(USER_SNOWFLAKE_1, GUILD_SNOWFLAKE_1, URL_2, &connection_pool)
-            .await
-            .unwrap();
+        set_url_for_user_and_guild(
+            USER_SNOWFLAKE_1,
+            GUILD_SNOWFLAKE_1,
+            URL_1,
+            connection_pool.clone(),
+        )
+        .await
+        .unwrap();
+        set_url_for_user_and_guild(
+            USER_SNOWFLAKE_1,
+            GUILD_SNOWFLAKE_1,
+            URL_2,
+            connection_pool.clone(),
+        )
+        .await
+        .unwrap();
 
         // act
-        let expected_url =
-            get_url_for_user_and_guild(USER_SNOWFLAKE_1, GUILD_SNOWFLAKE_1, &connection_pool)
-                .await
-                .unwrap();
+        let expected_url = get_url_for_user_and_guild(
+            USER_SNOWFLAKE_1,
+            GUILD_SNOWFLAKE_1,
+            connection_pool.clone(),
+        )
+        .await
+        .unwrap();
 
         // assert
         assert_eq!(expected_url, URL_2);
@@ -189,17 +214,26 @@ mod tests {
     async fn clear_url_removes_url() {
         // arrange
         let connection_pool = get_test_database().await;
-        set_url_for_user_and_guild(USER_SNOWFLAKE_1, GUILD_SNOWFLAKE_1, URL_1, &connection_pool)
-            .await
-            .unwrap();
+        set_url_for_user_and_guild(
+            USER_SNOWFLAKE_1,
+            GUILD_SNOWFLAKE_1,
+            URL_1,
+            connection_pool.clone(),
+        )
+        .await
+        .unwrap();
 
         // act
-        clear_url_for_user_and_guild(USER_SNOWFLAKE_1, GUILD_SNOWFLAKE_1, &connection_pool)
+        clear_url_for_user_and_guild(USER_SNOWFLAKE_1, GUILD_SNOWFLAKE_1, connection_pool.clone())
             .await
             .unwrap();
 
-        let expected_url =
-            get_url_for_user_and_guild(USER_SNOWFLAKE_1, GUILD_SNOWFLAKE_1, &connection_pool).await;
+        let expected_url = get_url_for_user_and_guild(
+            USER_SNOWFLAKE_1,
+            GUILD_SNOWFLAKE_1,
+            connection_pool.clone(),
+        )
+        .await;
 
         // assert
         assert!(expected_url.is_none());

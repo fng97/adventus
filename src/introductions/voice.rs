@@ -24,7 +24,7 @@ pub async fn play(
     guild_id: GuildId,
     channel_id: ChannelId,
     yt_url: &str,
-    http_client: &reqwest::Client,
+    http_client: reqwest::Client,
 ) {
     let manager = songbird::get(ctx)
         .await
