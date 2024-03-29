@@ -24,6 +24,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "config",
+ "once_cell",
  "poise",
  "rand",
  "regex",

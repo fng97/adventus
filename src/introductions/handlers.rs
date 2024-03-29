@@ -61,15 +61,7 @@ pub async fn voice_state_update(
         }
     };
 
-    play(
-        ctx,
-        guild_id,
-        channel_id,
-        &url,
-        &data.http_client,
-        &data.last_active,
-    )
-    .await;
+    play(ctx, guild_id, channel_id, &url, &data.http_client).await;
 
     Ok(())
 }

@@ -1,29 +1,30 @@
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
-
+use once_cell::sync::Lazy;
 use serenity::{
     all::{ChannelId, GuildId},
     async_trait,
     client::Context,
 };
-use songbird::input::YoutubeDl;
 use songbird::{
     events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent},
+    input::YoutubeDl,
     Songbird,
 };
-use tokio::{sync::Mutex, time::interval};
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::{
+    sync::{Mutex, MutexGuard},
+    task::JoinHandle,
+};
 use tracing::{info, warn};
 
-// TODO: Add error handling
+static DISCONNECT_HANDLES: Lazy<Mutex<HashMap<GuildId, JoinHandle<()>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
 pub async fn play(
     ctx: &Context,
     guild_id: GuildId,
     channel_id: ChannelId,
     yt_url: &str,
     http_client: &reqwest::Client,
-    last_active: &tokio::sync::Mutex<std::collections::HashMap<GuildId, std::time::Instant>>,
 ) {
     let manager = songbird::get(ctx)
         .await
@@ -32,20 +33,19 @@ pub async fn play(
 
     let handler_lock = match manager.join(guild_id, channel_id).await {
         Ok(handler_lock) => handler_lock,
-        Err(_) => return,
+        Err(e) => {
+            warn!("Failed to join channel: {:?}", e);
+            return;
+        }
     };
 
-    let mut handler: tokio::sync::MutexGuard<'_, songbird::Call> = handler_lock.lock().await;
+    let mut handler: MutexGuard<'_, songbird::Call> = handler_lock.lock().await;
 
     handler.add_global_event(TrackEvent::Error.into(), TrackErrorHandler);
 
     let _ = handler.play_only_input(YoutubeDl::new(http_client.clone(), yt_url.to_string()).into());
 
-    // update activity time - used for voice channel disconnect
-    last_active
-        .lock()
-        .await
-        .insert(guild_id, std::time::Instant::now());
+    schedule_disconnect(guild_id, manager).await;
 }
 
 struct TrackErrorHandler;
@@ -67,38 +67,29 @@ impl VoiceEventHandler for TrackErrorHandler {
     }
 }
 
-pub async fn disconnect_inactive_clients(
-    songbird: Arc<Songbird>,
-    last_active: Arc<Mutex<std::collections::HashMap<GuildId, Instant>>>,
-) {
-    const CHECK_EVERY: Duration = Duration::from_secs(2);
-    const DISCONNECT_AFTER: Duration = Duration::from_secs(8);
+async fn schedule_disconnect(guild_id: GuildId, songbird: Arc<Songbird>) {
+    const DISCONNECT_AFTER: Duration = Duration::from_secs(60 * 5);
 
-    let mut interval = interval(CHECK_EVERY);
+    let mut handles = DISCONNECT_HANDLES.lock().await;
 
-    loop {
-        interval.tick().await;
-        let now = Instant::now();
-
-        let guilds_to_disconnect: Vec<GuildId> = {
-            let last_active_guard = last_active.lock().await;
-            last_active_guard
-                .iter()
-                .filter_map(|(&guild_id, &last_active_time)| {
-                    if now.duration_since(last_active_time) > DISCONNECT_AFTER {
-                        Some(guild_id)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        };
-
-        for guild_id in guilds_to_disconnect {
-            if songbird.leave(guild_id).await.is_ok() {
-                info!("Disconnected from guild {} due to inactivity", guild_id);
-            }
-            last_active.lock().await.remove(&guild_id);
-        }
+    // cancel any existing disconnect future for this guild
+    if let Some(handle) = handles.get(&guild_id) {
+        handle.abort();
+        handles.remove(&guild_id);
     }
+
+    let handle = tokio::spawn(async move {
+        tokio::time::sleep(DISCONNECT_AFTER).await;
+        if songbird.leave(guild_id).await.is_ok() {
+            info!(
+                "Disconnected from guild {} after {} minutes without using voice.",
+                guild_id,
+                DISCONNECT_AFTER.as_secs() / 60
+            );
+        }
+        let mut handles = DISCONNECT_HANDLES.lock().await;
+        handles.remove(&guild_id);
+    });
+
+    handles.insert(guild_id, handle);
 }
