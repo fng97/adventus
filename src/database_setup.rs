@@ -22,7 +22,7 @@ fn url_without_db() -> String {
 #[cfg(test)]
 pub mod test_utils {
     use super::*;
-    use sqlx::{Connection, Executor, PgConnection, PgPool};
+    use sqlx::{Connection, Executor, PgConnection};
     use uuid::Uuid;
 
     pub async fn get_test_database() -> PgPool {

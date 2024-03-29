@@ -41,7 +41,7 @@ pub mod commands {
 
         // Send the message
         ctx.say(format!(
-            "{} rolled {}.",
+            "🎲 {} rolled {}.",
             ctx.author().mention(),
             results_str
         ))

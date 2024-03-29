@@ -4,7 +4,12 @@ use songbird::input::{Compose, YoutubeDl};
 use std::time::Duration;
 
 const YOUTUBE_URL_REGEX: &str =
-    r"^(https?\:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)[a-zA-Z0-9_-]{11}$";
+    r"^(https?\:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)[a-zA-Z0-9_-]{11}(\?[\w=&]*)?$";
+
+async fn err_say(ctx: &Context<'_>, message: &str) -> Result<(), Error> {
+    ctx.say(&format!("🔥 {message}")).await?;
+    Ok(())
+}
 
 fn youtube_url_is_valid(url: &str) -> Result<bool, regex::Error> {
     let regex = regex::Regex::new(YOUTUBE_URL_REGEX)?;
@@ -39,13 +44,12 @@ pub async fn set_intro(
     let guild_id = match ctx.guild_id() {
         Some(guild_id) => guild_id,
         None => {
-            ctx.say("This command can only be used in a server.")
-                .await?;
+            err_say(&ctx, "This command can only be used in a server.").await?;
             return Ok(());
         }
     };
     if !youtube_url_is_valid(url.as_str())? {
-        ctx.say("Invalid YouTube URL.").await?;
+        err_say(&ctx, "Invalid YouTube URL.").await?;
         return Ok(());
     }
 
@@ -53,8 +57,7 @@ pub async fn set_intro(
         get_yt_track_duration(ctx.data().http_client.clone(), url.as_str()).await
     {
         if duration > MAX_INTRO_DURATION {
-            ctx.say("The video must be less than 5 seconds long.")
-                .await?;
+            err_say(&ctx, "The video must be less than 5 seconds long.").await?;
             return Ok(());
         }
     } else {
@@ -69,7 +72,7 @@ pub async fn set_intro(
     )
     .await?;
 
-    ctx.say("Your intro sound has been set!").await?;
+    ctx.say("📯 Your intro sound has been set!").await?;
 
     Ok(())
 }
@@ -83,8 +86,7 @@ pub async fn clear_intro(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = match ctx.guild_id() {
         Some(guild_id) => guild_id,
         None => {
-            ctx.say("This command can only be used in a server.")
-                .await?;
+            err_say(&ctx, "This command can only be used in a server.").await?;
             return Ok(());
         }
     };
@@ -96,7 +98,7 @@ pub async fn clear_intro(ctx: Context<'_>) -> Result<(), Error> {
     )
     .await?;
 
-    ctx.say("Your intro sound has been cleared!").await?;
+    ctx.say("🧹 Your intro sound has been cleared!").await?;
 
     Ok(())
 }
