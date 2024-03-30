@@ -2,31 +2,43 @@
 
 ## Todos
 
-- add non-test queries after sqlx macros
-- add disconnecting after 30s of inactivity
-- add dice roller
-- add configuration crate, remove hard-coded values
-- add proper error handling
-- add logging via instrument macros
-- don't let it go to sleep (remove shuttle timeout)
-- command for adding a track for a user
-  - validate URL
-  - add postgres (sqlx) database to shuttle project
-- check for unused dependencies
-- dependabot
+1. [x] add YT url validation
+2. [x] add disconnecting the client after 30s of inactivity
+3. [x] pass clones of reqwest and PgPool instead of references
+4. [x] add more tests
+5. [ ] add counter metrics to postgres for now (transaction?)
+   1. [ ] dice rolls
+   2. [ ] introductions
+6. [x] add proper error handling
+   1. [x] ask ChatGPT to review this
+7. [ ] configuration module: remove hard-coded values?
+8. [ ] UPDATE README!
+
 - PR to zero2prod for double quoting (shellcheck warnings)
-- issue asking if they want a dev container
+  - issue asking if they want a dev container
 - pin versions so dev container is faster to build
 - start the database from rust when testing or running locally
+- document changes to roll
+
+### CI
+
+- add code coverage with tarpaulin
+- add security checks with cargo deny (cargo-crev?)
+- check for unused dependencies
+- dependabot
+- tests
+- clippy
+- security
+- shfmt
+- shellcheck
+
+### CD
+
+- automate deployment on push to main with Shuttle
+- don't let it go to sleep (remove shuttle timeout) (CD)
 
 ## Future Improvements
 
 - cache audio
-- set up telemetry with Grafana Cloud
-
-- add CI checks
-  - tests
-  - clippy
-  - security
-  - shfmt
-  - shellcheck
+- instrument with tracing spans
+- help command
