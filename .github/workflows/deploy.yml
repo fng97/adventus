@@ -15,4 +15,4 @@ jobs:
           name: adventus
           deploy-key: ${{ secrets.SHUTTLE_API_KEY }}
           no-test: true
-          secrets: "DISCORD_TOKEN = ${{ secrets.DISCORD_TOKEN }}"
+          secrets: "DISCORD_TOKEN = '${{ secrets.DISCORD_TOKEN }}'"
