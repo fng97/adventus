@@ -1,0 +1,25 @@
+[package]
+name = "adventus"
+version = "2024.3.1"
+edition = "2021"
+
+[dependencies]
+reqwest = "0.11.27"
+rand = "0.8.5"
+regex = "1.10.4"
+once_cell = "1.19.0"
+serenity = { version = "0.12.1", features = ["voice"] }
+songbird = "0.4.1"
+poise = "0.6.1"
+symphonia = { features = ["aac", "mp3", "isomp4", "alac"], version = "0.5.4" }
+shuttle-runtime = "0.42.0"
+shuttle-serenity = "0.42.0"
+shuttle-shared-db = { version = "0.42.0", features = ["postgres", "sqlx"] }
+tracing = "0.1.40"
+tokio = "1.36.0"
+uuid = { version = "1.8.0", features = ["v4"] }
+
+[dependencies.sqlx]
+version = "0.7.4"
+default-features = false
+features = ["runtime-tokio", "tls-rustls", "macros", "postgres", "migrate"]

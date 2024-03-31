@@ -1,0 +1,17 @@
+name: Shuttle Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: shuttle-hq/deploy-action@main
+        with:
+          name: adventus
+          deploy-key: ${{ secrets.SHUTTLE_API_KEY }}
+          no-test: true

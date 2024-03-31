@@ -1,14 +1,11 @@
 # Visual Studio Code
 .vscode
 
-# Private files
-credentials.py
-
-# Python
-__pycache__
-
 # Mac
 .DS_Store
 
-# AWS SAM
-.aws-sam
+# Added by cargo
+/target
+
+# Secrets
+Secrets.toml
