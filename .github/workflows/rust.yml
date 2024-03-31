@@ -6,6 +6,7 @@ env:
   CARGO_TERM_COLOR: always
   SQLX_VERSION: 0.7.1
   SQLX_FEATURES: "rustls,postgres"
+  DATABASE_URL: postgres://postgres:password@localhost:5432/discord 
 
 jobs:
   test:
@@ -37,8 +38,7 @@ jobs:
           sudo apt-get install libpq-dev -y
           SKIP_DOCKER=true ./scripts/init_db.sh
       - name: Check sqlx-data.json is up-to-date
-        run: |
-          DATABASE_URL=postgres://postgres:password@localhost:5432/discord cargo sqlx prepare --workspace --check
+        run: cargo sqlx prepare --workspace --check
       - name: Run tests
         run: cargo test
       - name: Linting
