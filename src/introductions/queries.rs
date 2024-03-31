@@ -13,7 +13,7 @@ pub async fn get_url_for_user_and_guild(
     user_id: u64,
     guild_id: u64,
     pool: PgPool,
-) -> Option<String> {
+) -> Result<String, sqlx::Error> {
     let user_id = user_id as i64;
     let guild_id = guild_id as i64;
 
@@ -40,7 +40,7 @@ pub async fn get_url_for_user_and_guild(
     .bind(user_id)
     .bind(guild_id);
 
-    query.fetch_one(&pool).await.ok().map(|url| url.yt_url)
+    query.fetch_one(&pool).await.map(|url| url.yt_url)
 }
 
 pub async fn set_url_for_user_and_guild(
@@ -176,7 +176,11 @@ mod tests {
         .await;
 
         // assert
-        assert!(expected_url.is_none());
+        // because assert_eq!(sqlx::Error::RowNotFound, expected_url) doesn't work:
+        match expected_url.unwrap_err() {
+            sqlx::Error::RowNotFound => (),                   // pass
+            _ => panic!("Expected sqlx::Error::RowNotFound"), // fail
+        }
     }
 
     #[tokio::test]
@@ -238,6 +242,10 @@ mod tests {
         .await;
 
         // assert
-        assert!(expected_url.is_none());
+        // because assert_eq!(sqlx::Error::RowNotFound, expected_url) doesn't work:
+        match expected_url.unwrap_err() {
+            sqlx::Error::RowNotFound => (),                   // pass
+            _ => panic!("Expected sqlx::Error::RowNotFound"), // fail
+        }
     }
 }

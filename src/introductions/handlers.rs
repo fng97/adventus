@@ -52,14 +52,15 @@ pub async fn voice_state_update(
     let url = match get_url_for_user_and_guild(user_id.get(), guild_id.get(), data.database.clone())
         .await
     {
-        Some(url) => url,
-        None => {
+        Ok(url) => url,
+        Err(sqlx::Error::RowNotFound) => {
             debug!(
                 "No introduction found for user {} in guild {}",
                 user_id, guild_id
             );
             return Ok(());
         }
+        Err(e) => return Err(e.into()),
     };
 
     play(ctx, guild_id, channel_id, &url, data.http_client.clone()).await;
