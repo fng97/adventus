@@ -1,63 +1,73 @@
 # Adventus
 
-A (hopefully) fun Discord bot.
+👋 [Add me to your server!](https://discord.com/api/oauth2/authorize?client_id=1074795024946036889&scope=applications.commands)
 
-## Usage
+## Features
 
-Adventus can be added to your server using [this link](https://discord.com/api/oauth2/authorize?client_id=1074795024946036889&scope=applications.commands).
+Documentation for each slash command pops up in Discord when you type `/` in a message box.
 
-### Dice Roller
+### 🎲 Roller
 
-Use the `/roll` command to roll a dice. Documentation is provided in the pop-up. Optionally, use the `rolls` option to roll multiple dice with the same number of sides.
+A simple dice roller. Here are some examples:
 
-For example:
-
+- `/roll` (defaults to 1d20) returns: "`@user` rolled 10."
 - `/roll sides: 20` returns: "`@user` rolled 13."
 - `/roll sides: 6 rolls: 2` returns: "`@user` rolled 2, 5."
 
+### 📯 Introductions
+
+Plays a user's introduction sound when they join a voice channel. This is configurable with the following commands:
+
+- `/set_intro` - Add an introduction sound from a YouTube URL
+- `/clear_intro` - Remove your introduction sound
+
+#### Notes
+
+- Sounds are set on a per-guild basis.
+- The YouTube video length can be up to 5 seconds long.
+- The bot joins the voice channel (if not already present) to play the introduction sound.
+- The bot will stick around so that subsequent user joins can be announced faster.
+- The bot leaves the voice channel after 5 minutes of inactivity.
+
 ## How does it work?
 
-### Architecture
+The [previous incarnation of this bot](https://github.com/fng97/adventus/tree/0b9c31b675cc2f3c98eff944f6740f1e9b0f2cb8) used a serverless API and [Discord Interactions](https://discord.com/developers/docs/interactions/receiving-and-responding) to handle the `/roll` slash command without a Discord framework. I was pretty proud of that, but I wanted to add more features and learn more about Rust, so I decided to rewrite it.
 
-Discord interactions allow for handling commands serverlessly. Upon using the slash command documented above, Discord makes a POST request to the Adventus API at the endpoint, `/discord`. See the Discord interactions documentation [here](https://discord.com/developers/docs/interactions/receiving-and-responding). This is forwarded by API Gateway to a Lambda that handles the request (using the AWS Lambda Powertools [REST API framework](https://awslabs.github.io/aws-lambda-powertools-python/2.12.0/core/event_handler/api_gateway/)). It calculates the dice roll(s) based on the values provided for `sides` and (optionally) `rolls` and responds to the author with a message reporting the outcome.
+What I'm using:
 
-[As required by Discord](https://discord.com/developers/docs/interactions/receiving-and-responding#receiving-an-interaction), the API is prepared to respond to a PING message with a PONG and validates the request signatures to authenticate the request. Discord will occasionally send requests with incorrect sigantures to check (expects a 401) that there is authentication in place.
+- 🦀 [Rust](https://www.rust-lang.org) ✨
+- 🎙️ [Serenity](https://github.com/serenity-rs/serenity) and [Songbird](https://github.com/serenity-rs/songbird) for the Discord client
+- 🐘 [PostgreSQL](https://www.postgresql.org) and [`sqlx`](https://github.com/launchbadge/sqlx) for persistence
+- 🚀 [Shuttle](https://www.shuttle.rs) for infrastructure
+- 🐳 [Dev Container](https://containers.dev) for development
+- 🪄 [GitHub Actions](https://github.com/features/actions) for CI/CD
 
-Finally, the Discord credentials required by the application are stored in SSM Parameter Store and retrieved upon instantiation of the Lambda (per instance rather than per call).
+Future improvements:
 
-```mermaid
-flowchart BT
-    dis[Discord]
+- cache audio for faster playback
+- help command
+- instrument with tracing spans
+- replace hard-coded values with configuration
 
-    dis -- PING, interaction --> apig
-    lda -- PONG, response --> dis
+## Running Locally
 
-    subgraph AWS
+You can get this running locally easily using Dev Containers. This assumes you have [Docker](https://www.docker.com) and [Visual Studio Code](https://code.visualstudio.com) installed, including the [Remote Containers](https://github.com/microsoft/vscode-remote-release) extension.
 
-        apig["API Gateway
-        <code>/discord</code>"]
-        lda[Lambda]
-        ssm[Secrets Manager]
+To set up the development environment:
 
-        apig -- request proxy event --> lda
-        ssm -- Discord credentials--> lda
+1. Open Visual Studio Code
+2. From the command palette, select "Dev Containers: Clone Repository in Container Volume..."
+3. Enter `fng97/adventus`
 
-    end
-```
+Now just wait for the container to build before Visual Studio Code reloads with your development environment ready to go!
 
-### Registering Commands
+To run the tests:
 
-Commands like `/roll` must be registered with Discord before they can be used. Currently (as of commit date), this can only be done by [making a POST request to the Discord API](https://discord.com/developers/docs/interactions/application-commands#making-a-global-command). [`command_registration_body.json`](command_registration_body.json) is the body of the request used to register the `/roll` command.
+1. Start the database: `./scripts/init_db.sh`
+2. Run the tests: `cargo test`
 
-### Infrastructure
+To run the bot:
 
-The AWS infrastructure is defined using [CloudFormation](https://aws.amazon.com/cloudformation/) in [`template.yaml`](template.yaml) and is deployed using [AWS SAM](https://aws.amazon.com/serverless/sam/).
-
-## Devcontainer Setup
-
-This project can be opened in a devcontainer using the *Dev Containers: Clone Repository in Container Volume* command. It will use the `.devcontainer/devcontainer.json` to build the development container.
-
-The following needs to be done manually after initialising the container. Eventually, I'd like to automate this using a Dockerfile or `"postCreateCommand"` in `devcontainer.json`.
-
-1. Run the following.
-2. `cargo install cargo-shuttle` (and authenticate with `cargo shuttle login`).
+1. Ensure `Secrets.toml` includes your discord token in the format `DISCORD_TOKEN="your_token_here"`
+2. Start the database if you haven't already: `./scripts/init_db.sh`
+3. Run the bot locally: `cargo shuttle run`
