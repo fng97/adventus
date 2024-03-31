@@ -1,5 +1,7 @@
 use sqlx::PgPool;
 
+/// A stopgap solution for tracking metrics so we don't lose data once we go live.
+
 // NOTE: Shuttle doesn't support compile-time sqlx macros yet but we want the
 // database checks so we'll use them for testing only. Must use string literal
 // so can't abstract query which means the below is not very DRY.

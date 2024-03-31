@@ -1,12 +1,13 @@
 use crate::common::{Data, Error};
-use crate::introductions::queries::get_url_for_user_and_guild;
-use crate::introductions::voice::play;
+use crate::introductions::queries;
+use crate::introductions::voice;
+use crate::metrics;
 
 use serenity::{
     all::{ChannelId, GuildId, UserId, VoiceState},
     client::Context,
 };
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Narrows VoiceStateUpdate event to user joining a voice channel.
 fn user_joined_voice(
@@ -49,8 +50,12 @@ pub async fn voice_state_update(
         }
     };
 
-    let url = match get_url_for_user_and_guild(user_id.get(), guild_id.get(), data.database.clone())
-        .await
+    let url = match queries::get_url_for_user_and_guild(
+        user_id.get(),
+        guild_id.get(),
+        data.database.clone(),
+    )
+    .await
     {
         Ok(url) => url,
         Err(sqlx::Error::RowNotFound) => {
@@ -63,7 +68,14 @@ pub async fn voice_state_update(
         Err(e) => return Err(e.into()),
     };
 
-    play(ctx, guild_id, channel_id, &url, data.http_client.clone()).await;
+    voice::play(ctx, guild_id, channel_id, &url, data.http_client.clone()).await;
+
+    match metrics::increment(data.database.clone(), metrics::Metrics::Introductions).await {
+        Ok(_) => {}
+        Err(e) => {
+            warn!("Failed to increment introductions metric: {:?}", e);
+        }
+    }
 
     Ok(())
 }
