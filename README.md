@@ -1,6 +1,6 @@
 # Adventus
 
-👋 [Add me to your server!](https://discord.com/api/oauth2/authorize?client_id=1074795024946036889&scope=applications.commands)
+👋 [Add me to your server!](https://discord.com/oauth2/authorize?client_id=1074795024946036889&permissions=274914740224&scope=bot+applications.commands)
 
 ## Features
 
