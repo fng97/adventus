@@ -5,6 +5,10 @@ struct IntroUrl {
     yt_url: String,
 }
 
+// NOTE: Shuttle doesn't support compile-time sqlx macros yet but we want the
+// database checks so we'll use them for testing only. Must use string literal
+// so can't abstract query which means the below is not very DRY.
+
 pub async fn get_url_for_user_and_guild(
     user_id: u64,
     guild_id: u64,
@@ -13,8 +17,6 @@ pub async fn get_url_for_user_and_guild(
     let user_id = user_id as i64;
     let guild_id = guild_id as i64;
 
-    // shuttle doesn't support compile-time sqlx macros yet so we'll just use
-    // them for testing. Must use string literal so can't abstract query.
     #[cfg(test)]
     let query = sqlx::query_as!(
         IntroUrl,

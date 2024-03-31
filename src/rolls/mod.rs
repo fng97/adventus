@@ -32,14 +32,12 @@ pub mod commands {
             .map(|_| rand::thread_rng().gen_range(1..=sides))
             .collect();
 
-        // Create a string of the results to send in the message
         let results_str = results
             .iter()
             .map(u8::to_string)
             .collect::<Vec<_>>()
             .join(", ");
 
-        // Send the message
         ctx.say(format!(
             "🎲 {} rolled {}.",
             ctx.author().mention(),

@@ -28,7 +28,6 @@ pub mod test_utils {
     pub async fn get_test_database() -> PgPool {
         let database_name = Uuid::new_v4().to_string(); // unique db for each test
 
-        // Create database
         let _ = PgConnection::connect(&url_without_db())
             .await
             .expect("Failed to connect to Postgres")
@@ -38,7 +37,6 @@ pub mod test_utils {
 
         let connection_string = local_database_url(&database_name);
 
-        // Migrate database
         let connection_pool = PgPool::connect(&connection_string)
             .await
             .expect("Failed to connect to Postgres.");
