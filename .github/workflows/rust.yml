@@ -38,7 +38,7 @@ jobs:
           SKIP_DOCKER=true ./scripts/init_db.sh
       - name: Check sqlx-data.json is up-to-date
         run: |
-          cargo sqlx prepare --workspace --check
+          DATABASE_URL=postgres://postgres:password@localhost:5432/discord cargo sqlx prepare --workspace --check
       - name: Run tests
         run: cargo test
       - name: Linting
