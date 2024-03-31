@@ -1,4 +1,4 @@
-name: example
+name: Shell Checker
 on:
   push:
     paths:
