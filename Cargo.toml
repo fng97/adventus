@@ -1,6 +1,6 @@
 [package]
 name = "adventus"
-version = "2024.4.1"
+version = "2024.4.2"
 edition = "2021"
 
 [dependencies]
@@ -16,7 +16,7 @@ shuttle-runtime = "0.42.0"
 shuttle-serenity = "0.42.0"
 shuttle-shared-db = { version = "0.42.0", features = ["postgres", "sqlx"] }
 tracing = "0.1.40"
-tokio = "1.36.0"
+tokio = "1.37.0"
 uuid = { version = "1.8.0", features = ["v4"] }
 
 [dependencies.sqlx]
