@@ -2,11 +2,11 @@ name: Security Audit
 
 on:
   schedule:
-    - cron: '0 0 1 * *'
+    - cron: "0 0 1 * *"
   push:
     paths:
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
   workflow_dispatch:
 
 jobs:
