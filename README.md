@@ -36,7 +36,7 @@ The [previous incarnation of this bot](https://github.com/fng97/adventus/tree/0b
 What I'm using:
 
 - 🦀 [Rust](https://www.rust-lang.org) ✨
-- 🎙️ [Serenity](https://github.com/serenity-rs/serenity) and [Songbird](https://github.com/serenity-rs/songbird) for the Discord client
+- 🎙️ [Serenity](https://github.com/serenity-rs/serenity), [Poise](https://github.com/serenity-rs/poise), and [Songbird](https://github.com/serenity-rs/songbird) for the Discord client
 - 🐘 [PostgreSQL](https://www.postgresql.org) and [`sqlx`](https://github.com/launchbadge/sqlx) for persistence
 - 🚀 [Shuttle](https://www.shuttle.rs) for infrastructure
 - 🐳 [Dev Container](https://containers.dev) for development
