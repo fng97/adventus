@@ -43,7 +43,7 @@ pub async fn play(
 
     handler.add_global_event(TrackEvent::Error.into(), TrackErrorHandler);
 
-    let _ = handler.play_only_input(YoutubeDl::new(http_client.clone(), yt_url.to_string()).into());
+    let _ = handler.play(YoutubeDl::new(http_client.clone(), yt_url.to_string()).into());
 
     schedule_disconnect(guild_id, manager).await;
 }
