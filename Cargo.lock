@@ -27,7 +27,7 @@ dependencies = [
  "regex",
  "reqwest",
  "serenity",
- "shuttle-runtime 0.44.0",
+ "shuttle-runtime",
  "shuttle-serenity",
  "shuttle-shared-db",
  "songbird",
@@ -2698,18 +2698,6 @@ dependencies = [
 
 [[package]]
 name = "shuttle-codegen"
-version = "0.42.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbaaa74ae77edfc5590c87af97bfc15d0aff2db9ff4a5fd891be0a7dd0de8089"
-dependencies = [
- "proc-macro-error",
- "proc-macro2",
- "quote",
- "syn 2.0.49",
-]
-
-[[package]]
-name = "shuttle-codegen"
 version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a0ba1965be7df9f6eacf86ce8e7d13371972620f1b512afb16de0fb7f9842fb"
@@ -2718,33 +2706,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.49",
-]
-
-[[package]]
-name = "shuttle-common"
-version = "0.42.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "910ae1502f083563f06fee5d5ceb2a8b45f92c67ef7834806880484f15d79bb5"
-dependencies = [
- "anyhow",
- "chrono",
- "comfy-table",
- "crossterm 0.27.0",
- "http 0.2.11",
- "opentelemetry",
- "opentelemetry-http",
- "pin-project",
- "semver",
- "serde",
- "serde_json",
- "strum 0.26.2",
- "tower",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "url",
- "uuid",
- "zeroize",
 ]
 
 [[package]]
@@ -2776,19 +2737,6 @@ dependencies = [
 
 [[package]]
 name = "shuttle-proto"
-version = "0.42.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad7aa381187faaa32562c1e3631047b1edd070c055be50a5f32d13a538110fd7"
-dependencies = [
- "futures-core",
- "prost",
- "prost-types",
- "shuttle-common 0.42.0",
- "tonic",
-]
-
-[[package]]
-name = "shuttle-proto"
 version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa562975ec33dfdb0535864e351f0d632af1306f877481bbc5a597bfb7b8ee2e"
@@ -2796,30 +2744,7 @@ dependencies = [
  "futures-core",
  "prost",
  "prost-types",
- "shuttle-common 0.44.0",
- "tonic",
-]
-
-[[package]]
-name = "shuttle-runtime"
-version = "0.42.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "322f013c5058e37bf19a9ad8af35a2ac139605b0cbd941c0d0a009d032e23b73"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "prost-types",
- "serde",
- "serde_json",
- "shuttle-codegen 0.42.0",
- "shuttle-common 0.42.0",
- "shuttle-proto 0.42.0",
- "shuttle-service 0.42.0",
- "strfmt",
- "thiserror",
- "tokio",
- "tokio-stream",
+ "shuttle-common",
  "tonic",
 ]
 
@@ -2834,10 +2759,10 @@ dependencies = [
  "colored",
  "serde",
  "serde_json",
- "shuttle-codegen 0.44.0",
- "shuttle-common 0.44.0",
- "shuttle-proto 0.44.0",
- "shuttle-service 0.44.0",
+ "shuttle-codegen",
+ "shuttle-common",
+ "shuttle-proto",
+ "shuttle-service",
  "strfmt",
  "tokio",
  "tokio-stream",
@@ -2847,26 +2772,12 @@ dependencies = [
 
 [[package]]
 name = "shuttle-serenity"
-version = "0.42.0"
+version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10a951e067cf3f497c88671ff8145f22d0da7db3252960a20c9f1aa7b23eae75"
+checksum = "0cb97523f1d30635deca8739e03a312a578631251d1370a23a82439452b18587"
 dependencies = [
  "serenity",
- "shuttle-runtime 0.42.0",
-]
-
-[[package]]
-name = "shuttle-service"
-version = "0.42.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9118dcf5aea64a38a06875a744b6c7daf8aa41e56eb2ecea2a21fb8c42ff7db5"
-dependencies = [
- "anyhow",
- "async-trait",
- "serde",
- "shuttle-common 0.42.0",
- "strfmt",
- "thiserror",
+ "shuttle-runtime",
 ]
 
 [[package]]
@@ -2878,22 +2789,22 @@ dependencies = [
  "anyhow",
  "async-trait",
  "serde",
- "shuttle-common 0.44.0",
+ "shuttle-common",
  "strfmt",
  "thiserror",
 ]
 
 [[package]]
 name = "shuttle-shared-db"
-version = "0.42.0"
+version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c106b44d5d07b85dc495c10fc025a4cf365d5767992e2efcd6fe3e74ccbf3d9d"
+checksum = "f79157e7cd1e86f3661f3b45c0374ad9815fd65224b9573195ff8a9e6da2ab49"
 dependencies = [
  "async-trait",
  "diesel-async",
  "serde",
  "serde_json",
- "shuttle-service 0.42.0",
+ "shuttle-service",
  "sqlx",
 ]
 
