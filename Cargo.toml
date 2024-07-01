@@ -14,7 +14,7 @@ poise = "0.6.1"
 symphonia = { features = ["aac", "mp3", "isomp4", "alac"], version = "0.5.4" }
 shuttle-runtime = "0.44.0"
 shuttle-serenity = "0.44.0"
-shuttle-shared-db = { version = "0.44.0", features = ["postgres", "sqlx"] }
+shuttle-shared-db = { version = "0.46.0", features = ["postgres", "sqlx"] }
 tracing = "0.1.40"
 tokio = "1.38.0"
 uuid = { version = "1.8.0", features = ["v4"] }
