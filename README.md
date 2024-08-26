@@ -16,6 +16,9 @@ A simple dice roller. Here are some examples:
 
 ### 📯 Introductions
 
+NOTE: _This functionality is currently disabled. YouTube is not happy with my usage
+of yt-dlp..._ 👀
+
 Plays a user's introduction sound when they join a voice channel. This is configurable with the following commands:
 
 - `/set_intro` - Add an introduction sound from a YouTube URL

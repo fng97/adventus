@@ -28,6 +28,8 @@ async fn get_yt_track_duration(
     }
 }
 
+const VOICE_DISABLED_MSG: &str = "Voice introductions have been temporarily disabled. YouTube is blocking my IP because it thinks I'm a bot 👀";
+
 /// Set your intro sound from a YouTube URL.
 ///
 /// This sound plays when you join a voice channel. The sound is streamed
@@ -38,41 +40,43 @@ pub async fn set_intro(
     ctx: Context<'_>,
     #[description = "YouTube URL (video must be less than 5s long)"] url: String,
 ) -> Result<(), Error> {
-    const MAX_INTRO_DURATION: Duration = Duration::from_secs(5);
+    // const MAX_INTRO_DURATION: Duration = Duration::from_secs(5);
+    //
+    // let user_id = ctx.author().id;
+    // let guild_id = match ctx.guild_id() {
+    //     Some(guild_id) => guild_id,
+    //     None => {
+    //         err_say(&ctx, "This command can only be used in a server.").await?;
+    //         return Ok(());
+    //     }
+    // };
+    // if !youtube_url_is_valid(url.as_str())? {
+    //     err_say(&ctx, "Invalid YouTube URL.").await?;
+    //     return Ok(());
+    // }
+    //
+    // if let Some(duration) =
+    //     get_yt_track_duration(ctx.data().http_client.clone(), url.as_str()).await
+    // {
+    //     if duration > MAX_INTRO_DURATION {
+    //         err_say(&ctx, "The video must be less than 5 seconds long.").await?;
+    //         return Ok(());
+    //     }
+    // } else {
+    //     return Err("Failed to get video duration.".into());
+    // }
+    //
+    // set_url_for_user_and_guild(
+    //     user_id.get(),
+    //     guild_id.get(),
+    //     url.as_str(),
+    //     ctx.data().database.clone(),
+    // )
+    // .await?;
+    //
+    // ctx.say("📯 Your intro sound has been set!").await?;
 
-    let user_id = ctx.author().id;
-    let guild_id = match ctx.guild_id() {
-        Some(guild_id) => guild_id,
-        None => {
-            err_say(&ctx, "This command can only be used in a server.").await?;
-            return Ok(());
-        }
-    };
-    if !youtube_url_is_valid(url.as_str())? {
-        err_say(&ctx, "Invalid YouTube URL.").await?;
-        return Ok(());
-    }
-
-    if let Some(duration) =
-        get_yt_track_duration(ctx.data().http_client.clone(), url.as_str()).await
-    {
-        if duration > MAX_INTRO_DURATION {
-            err_say(&ctx, "The video must be less than 5 seconds long.").await?;
-            return Ok(());
-        }
-    } else {
-        return Err("Failed to get video duration.".into());
-    }
-
-    set_url_for_user_and_guild(
-        user_id.get(),
-        guild_id.get(),
-        url.as_str(),
-        ctx.data().database.clone(),
-    )
-    .await?;
-
-    ctx.say("📯 Your intro sound has been set!").await?;
+    ctx.say(VOICE_DISABLED_MSG).await?;
 
     Ok(())
 }
@@ -83,22 +87,24 @@ pub async fn set_intro(
 /// channel. To set a new intro sound, use the `/set_intro` command.
 #[poise::command(slash_command)]
 pub async fn clear_intro(ctx: Context<'_>) -> Result<(), Error> {
-    let guild_id = match ctx.guild_id() {
-        Some(guild_id) => guild_id,
-        None => {
-            err_say(&ctx, "This command can only be used in a server.").await?;
-            return Ok(());
-        }
-    };
+    // let guild_id = match ctx.guild_id() {
+    //     Some(guild_id) => guild_id,
+    //     None => {
+    //         err_say(&ctx, "This command can only be used in a server.").await?;
+    //         return Ok(());
+    //     }
+    // };
+    //
+    // clear_url_for_user_and_guild(
+    //     ctx.author().id.get(),
+    //     guild_id.get(),
+    //     ctx.data().database.clone(),
+    // )
+    // .await?;
+    //
+    // ctx.say("🧹 Your intro sound has been cleared!").await?;
 
-    clear_url_for_user_and_guild(
-        ctx.author().id.get(),
-        guild_id.get(),
-        ctx.data().database.clone(),
-    )
-    .await?;
-
-    ctx.say("🧹 Your intro sound has been cleared!").await?;
+    ctx.say(VOICE_DISABLED_MSG).await?;
 
     Ok(())
 }
