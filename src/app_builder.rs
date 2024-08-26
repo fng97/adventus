@@ -30,9 +30,9 @@ pub async fn build(discord_token: String, pool: sqlx::PgPool) -> Client {
                 introductions::commands::clear_intro(),
                 rolls::commands::roll(),
             ],
-            event_handler: |ctx, event, framework, data| {
-                Box::pin(handlers::event_handler(ctx, event, framework, data))
-            },
+            // event_handler: |ctx, event, framework, data| {
+            //     Box::pin(handlers::event_handler(ctx, event, framework, data))
+            // },
             on_error: |error| Box::pin(handlers::on_error(error)),
             ..Default::default()
         })
