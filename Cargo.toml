@@ -16,7 +16,7 @@ shuttle-runtime = "0.47.0"
 shuttle-serenity = "0.47.0"
 shuttle-shared-db = { version = "0.47.0", features = ["postgres", "sqlx"] }
 tracing = "0.1.40"
-tokio = "1.38.0"
+tokio = "1.40.0"
 uuid = { version = "1.8.0", features = ["v4"] }
 
 [dependencies.sqlx]
