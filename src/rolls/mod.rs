@@ -1,6 +1,6 @@
 pub mod commands {
     use crate::common::{Context, Error};
-    use crate::metrics;
+    // use crate::metrics;
 
     use poise::serenity_prelude::Mentionable;
     use rand::Rng;
@@ -46,7 +46,7 @@ pub mod commands {
         ))
         .await?;
 
-        metrics::increment(ctx.data().database.clone(), metrics::Metrics::Rolls).await?;
+        // metrics::increment(ctx.data().database.clone(), metrics::Metrics::Rolls).await?;
 
         Ok(())
     }
