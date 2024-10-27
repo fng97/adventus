@@ -1,5 +1,4 @@
 use adventus::app_builder;
-use tracing_subscriber;
 
 #[tokio::main]
 async fn main() {
