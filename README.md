@@ -41,8 +41,6 @@ What I'm using:
 - 🦀 [Rust](https://www.rust-lang.org) ✨
 - 🎙️ [Serenity](https://github.com/serenity-rs/serenity), [Poise](https://github.com/serenity-rs/poise), and [Songbird](https://github.com/serenity-rs/songbird) for the Discord client
 - 🐘 [PostgreSQL](https://www.postgresql.org) and [`sqlx`](https://github.com/launchbadge/sqlx) for persistence
-- 🚀 [Shuttle](https://www.shuttle.rs) for infrastructure
-- 🐳 [Dev Container](https://containers.dev) for development
 - 🪄 [GitHub Actions](https://github.com/features/actions) for CI/CD
 
 Future improvements:
@@ -53,6 +51,9 @@ Future improvements:
 - replace hard-coded values with configuration
 
 ## Running Locally
+
+FIXME: No longer using dev container. Re-write this section for Nix or add back
+a dev container that uses Nix.
 
 You can get this running locally easily using Dev Containers. This assumes you have [Docker](https://www.docker.com) and [Visual Studio Code](https://code.visualstudio.com) installed, including the [Remote Containers](https://github.com/microsoft/vscode-remote-release) extension.
 

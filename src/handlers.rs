@@ -1,22 +1,22 @@
 use crate::common::{Data, Error};
-use crate::introductions;
+// use crate::introductions;
 
 use poise::serenity_prelude as serenity;
 use tracing::{error, info, warn};
 
 pub async fn event_handler(
-    ctx: &serenity::Context,
+    _ctx: &serenity::Context,
     event: &serenity::FullEvent,
     _framework: poise::FrameworkContext<'_, Data, Error>,
-    data: &Data,
+    _data: &Data,
 ) -> Result<(), Error> {
     match event {
         serenity::FullEvent::Ready { data_about_bot, .. } => {
             info!("Logged in as {}", data_about_bot.user.name);
         }
-        serenity::FullEvent::VoiceStateUpdate { old, new, .. } => {
-            introductions::handlers::voice_state_update(ctx, data, old, new).await?
-        }
+        // serenity::FullEvent::VoiceStateUpdate { old, new, .. } => {
+        //     introductions::handlers::voice_state_update(ctx, data, old, new).await?
+        // }
         _ => {}
     }
     Ok(())
