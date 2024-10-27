@@ -16,12 +16,15 @@
       {
         devShells.default = with pkgs; mkShell {
           buildInputs = [
+            postgresql
+
+            cargo-edit  # for `cargo upgrade`
+
             openssl
             pkg-config
             rust-bin.stable.latest.default
 
-            cargo-edit  # for `cargo upgrade`
-
+            # use nightly to check for unused deps:
             # rust-bin.nightly.latest.default
             # cargo-udeps
           ];
