@@ -24,6 +24,8 @@
             sqlx-cli
             cargo-edit  # for `cargo upgrade`
             rust-analyzer
+            shellcheck
+            shfmt
 
             openssl
             pkg-config

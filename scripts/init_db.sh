@@ -10,15 +10,15 @@ DB_PORT="${POSTGRES_PORT:=5432}"
 running_postgres_containers=$(docker ps --quiet --filter ancestor=postgres)
 
 if [ -z "${running_postgres_containers}" ]; then
-  echo "Starting PostgreSQL container"
-  docker run --env POSTGRES_PASSWORD=${DB_PASSWORD} --env POSTGRES_DB=${DB_NAME} --publish ${DB_PORT}:5432 --detach postgres
+	echo "Starting PostgreSQL container"
+	docker run --env POSTGRES_PASSWORD="${DB_PASSWORD}" --env POSTGRES_DB="${DB_NAME}" --publish "${DB_PORT}":5432 --detach postgres
 else
-  echo "PostgreSQL is already running"
+	echo "PostgreSQL is already running"
 fi
 
 until pg_isready --host="${DB_HOST}" --port="${DB_PORT}"; do
-  echo "Waiting for PostgreSQL database to be ready..."
-  sleep 1
+	echo "Waiting for PostgreSQL database to be ready..."
+	sleep 1
 done
 
 # sqlx requires DATABASE_URL
