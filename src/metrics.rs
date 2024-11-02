@@ -1,11 +1,5 @@
 use sqlx::PgPool;
 
-/// A stopgap solution for tracking metrics so we don't lose data once we go live.
-
-// NOTE: Shuttle doesn't support compile-time sqlx macros yet but we want the
-// database checks so we'll use them for testing only. Must use string literal
-// so can't abstract query which means the below is not very DRY.
-
 pub enum Metrics {
     Rolls,
     Introductions,
@@ -21,8 +15,7 @@ impl AsRef<str> for Metrics {
 }
 
 pub async fn increment(pool: PgPool, metric: Metrics) -> Result<(), sqlx::Error> {
-    #[cfg(test)]
-    let query = sqlx::query!(
+    let _ = sqlx::query!(
         r#"
         INSERT INTO metrics (metric_name, count)
         VALUES ($1, 1)
@@ -30,20 +23,9 @@ pub async fn increment(pool: PgPool, metric: Metrics) -> Result<(), sqlx::Error>
         SET count = metrics.count + 1
         "#,
         metric.as_ref(),
-    );
-
-    #[cfg(not(test))]
-    let query = sqlx::query(
-        r#"
-        INSERT INTO metrics (metric_name, count)
-        VALUES ($1, 1)
-        ON CONFLICT (metric_name) DO UPDATE
-        SET count = metrics.count + 1
-        "#,
     )
-    .bind(metric.as_ref());
-
-    query.execute(&pool).await?;
+    .execute(&pool)
+    .await?;
 
     Ok(())
 }
