@@ -5,10 +5,6 @@ struct IntroUrl {
     yt_url: String,
 }
 
-// NOTE: Shuttle doesn't support compile-time sqlx macros yet but we want the
-// database checks so we'll use them for testing only. Must use string literal
-// so can't abstract query which means the below is not very DRY.
-
 pub async fn get_url_for_user_and_guild(
     user_id: u64,
     guild_id: u64,
@@ -17,8 +13,7 @@ pub async fn get_url_for_user_and_guild(
     let user_id = user_id as i64;
     let guild_id = guild_id as i64;
 
-    #[cfg(test)]
-    let query = sqlx::query_as!(
+    sqlx::query_as!(
         IntroUrl,
         r#"
         SELECT yt_url
@@ -27,20 +22,10 @@ pub async fn get_url_for_user_and_guild(
         "#,
         user_id,
         guild_id,
-    );
-
-    #[cfg(not(test))]
-    let query = sqlx::query_as::<_, IntroUrl>(
-        r#"
-        SELECT yt_url
-        FROM intros
-        WHERE user_snowflake = $1 AND guild_snowflake = $2
-        "#,
     )
-    .bind(user_id)
-    .bind(guild_id);
-
-    query.fetch_one(&pool).await.map(|url| url.yt_url)
+    .fetch_one(&pool)
+    .await
+    .map(|url| url.yt_url)
 }
 
 pub async fn set_url_for_user_and_guild(
@@ -52,8 +37,7 @@ pub async fn set_url_for_user_and_guild(
     let user_id = user_id as i64;
     let guild_id = guild_id as i64;
 
-    #[cfg(test)]
-    let query = sqlx::query!(
+    sqlx::query!(
         r#"
         INSERT INTO intros (user_snowflake, guild_snowflake, yt_url)
         VALUES ($1, $2, $3)
@@ -63,22 +47,9 @@ pub async fn set_url_for_user_and_guild(
         user_id,
         guild_id,
         url,
-    );
-
-    #[cfg(not(test))]
-    let query = sqlx::query(
-        r#"
-        INSERT INTO intros (user_snowflake, guild_snowflake, yt_url)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_snowflake, guild_snowflake)
-        DO UPDATE SET yt_url = EXCLUDED.yt_url
-        "#,
     )
-    .bind(user_id)
-    .bind(guild_id)
-    .bind(url);
-
-    query.execute(&pool).await?;
+    .execute(&pool)
+    .await?;
 
     Ok(())
 }
@@ -91,27 +62,16 @@ pub async fn clear_url_for_user_and_guild(
     let user_id = user_id as i64;
     let guild_id = guild_id as i64;
 
-    #[cfg(test)]
-    let query = sqlx::query!(
+    sqlx::query!(
         r#"
         DELETE FROM intros
         WHERE user_snowflake = $1 AND guild_snowflake = $2
         "#,
         user_id,
         guild_id,
-    );
-
-    #[cfg(not(test))]
-    let query = sqlx::query(
-        r#"
-        DELETE FROM intros
-        WHERE user_snowflake = $1 AND guild_snowflake = $2
-        "#,
     )
-    .bind(user_id)
-    .bind(guild_id);
-
-    query.execute(&pool).await?;
+    .execute(&pool)
+    .await?;
 
     Ok(())
 }

@@ -21,8 +21,9 @@
         devShells.default = with pkgs; mkShell {
           buildInputs = [
             postgresql
-
+            sqlx-cli
             cargo-edit  # for `cargo upgrade`
+            rust-analyzer
 
             openssl
             pkg-config
@@ -32,6 +33,9 @@
             # rust-bin.nightly.latest.default
             # cargo-udeps
           ];
+
+          DATABASE_URL = "postgres://postgres:password@localhost:5432/adventus";
+          shellHook = "${pkgs.bash}/bin/bash ./scripts/init_db.sh";
         };
       }
     );
