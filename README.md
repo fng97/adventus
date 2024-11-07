@@ -75,3 +75,7 @@ To run the bot:
 1. Ensure `Secrets.toml` includes your discord token in the format `DISCORD_TOKEN="your_token_here"`
 2. Start the database if you haven't already: `./scripts/init_db.sh`
 3. Run the bot locally: `cargo shuttle run`
+
+## Todos
+
+- should CalVer action do a build to update Cargo.lock?

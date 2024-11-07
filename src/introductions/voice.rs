@@ -24,7 +24,7 @@ pub async fn play(
     guild_id: GuildId,
     channel_id: ChannelId,
     yt_url: &str,
-    http_client: reqwest::Client,
+    // http_client: reqwest::Client,
 ) {
     let manager = songbird::get(ctx)
         .await
@@ -43,7 +43,7 @@ pub async fn play(
 
     handler.add_global_event(TrackEvent::Error.into(), TrackErrorHandler);
 
-    let _ = handler.play(YoutubeDl::new(http_client.clone(), yt_url.to_string()).into());
+    // let _ = handler.play(YoutubeDl::new(http_client.clone(), yt_url.to_string()).into());
 
     schedule_disconnect(guild_id, manager).await;
 }
