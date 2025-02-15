@@ -1,6 +1,2 @@
-# rust
-/target
-
 # nix flake direnv
 .direnv
-
