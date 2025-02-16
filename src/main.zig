@@ -1,24 +1,43 @@
 const std = @import("std");
+const json = std.json;
+const http = std.http;
 
 pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
+    // 1. Create HTTP client
+    var client = http.Client{ .allocator = allocator };
+    defer client.deinit();
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+    // 2. Initialize server_header_buffer
+    var server_header_buffer: [4096]u8 = undefined;
 
-    try bw.flush(); // don't forget to flush!
-}
+    // 3. Open a GET request to the Discord Gateway endpoint
+    var req = try client.open(.GET, try std.Uri.parse("https://discord.com/api/v10/gateway"), .{
+        .server_header_buffer = &server_header_buffer,
+    });
+    defer req.deinit();
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
+    // 4. Send the request
+    try req.send();
+    try req.wait();
+
+    // 5. Read the response
+    var response = std.ArrayList(u8).init(allocator);
+    defer response.deinit();
+    try req.reader().readAllArrayList(&response, 1024 * 1024);
+
+    // 6. Parse the JSON response
+    var parsed = try json.parseFromSlice(json.Value, allocator, response.items, .{});
+    defer parsed.deinit();
+
+    // 7. Convert JSON to a string and print it
+    var json_buffer: [1024]u8 = undefined; // Temporary buffer
+    var fba = std.heap.FixedBufferAllocator.init(&json_buffer);
+    var json_string = std.ArrayList(u8).init(fba.allocator());
+
+    try json.stringify(parsed.value, .{}, json_string.writer());
+
+    std.debug.print("Received JSON Response: {s}\n", .{json_string.items});
 }
