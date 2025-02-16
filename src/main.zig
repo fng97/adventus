@@ -6,6 +6,9 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
+    const token = try std.process.getEnvVarOwned(allocator, "DISCORD_BOT_TOKEN");
+    defer allocator.free(token);
+
     // 1. Create HTTP client
     var client = http.Client{ .allocator = allocator };
     defer client.deinit();
@@ -14,8 +17,11 @@ pub fn main() !void {
     var server_header_buffer: [4096]u8 = undefined;
 
     // 3. Open a GET request to the Discord Gateway endpoint
-    var req = try client.open(.GET, try std.Uri.parse("https://discord.com/api/v10/gateway"), .{
+    var req = try client.open(.GET, try std.Uri.parse("https://discord.com/api/v10/gateway/bot"), .{
         .server_header_buffer = &server_header_buffer,
+        .headers = .{
+            .authorization = .{ .override = try std.fmt.allocPrint(allocator, "Bot {s}", .{token}) },
+        },
     });
     defer req.deinit();
 
