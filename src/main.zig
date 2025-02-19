@@ -1,6 +1,7 @@
 const std = @import("std");
 const json = std.json;
 const http = std.http;
+const Allocator = std.mem.Allocator;
 
 // TODO:
 // - try connect to WSS endpoint and parse hello event
@@ -46,18 +47,18 @@ pub fn main() !void {
     // Read the response
     var response = std.ArrayList(u8).init(allocator);
     defer response.deinit();
-    try req.reader().readAllArrayList(&response, 1024 * 1024);
+    try req.reader().readAllArrayList(&response, 256); // usually 135 chars
 
     // Parse the JSON response
     var parsed = try json.parseFromSlice(json.Value, allocator, response.items, .{});
     defer parsed.deinit();
 
+    try printJson(&parsed.value, allocator);
+}
+
+fn printJson(j: *json.Value, allocator: Allocator) !void {
     // Convert JSON to a string and print it
-    var json_buffer: [1024]u8 = undefined; // Temporary buffer
-    var fba = std.heap.FixedBufferAllocator.init(&json_buffer);
-    var json_string = std.ArrayList(u8).init(fba.allocator());
-
-    try json.stringify(parsed.value, .{}, json_string.writer());
-
+    var json_string = std.ArrayList(u8).init(allocator);
+    try json.stringify(j, .{}, json_string.writer());
     std.debug.print("Received JSON Response: {s}\n", .{json_string.items});
 }
