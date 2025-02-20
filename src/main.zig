@@ -50,10 +50,31 @@ pub fn main() !void {
     try req.reader().readAllArrayList(&response, 256); // usually 135 chars
 
     // Parse the JSON response
-    var parsed = try json.parseFromSlice(json.Value, allocator, response.items, .{});
+    const GetGatewayBotResponse = struct { url: []const u8 };
+    var parsed = try json.parseFromSlice(
+        GetGatewayBotResponse,
+        allocator,
+        response.items,
+        .{ .ignore_unknown_fields = true }, // ignore shards and session_start_limit for now
+    );
     defer parsed.deinit();
 
-    try printJson(&parsed.value, allocator);
+    // try printJson(&parsed.value, allocator);
+
+    const wss_url = parsed.value.url;
+
+    if (wss_url.len == 0) {
+        return std.debug.print("Error: WSS URL not found in response\n", .{});
+    }
+
+    std.debug.print("WSS URL: {s}\n", .{wss_url});
+
+    // // try connect to WSS endpoint and parse hello event
+    // var wss = try http.WebSocket.connect(allocator, try std.Uri.parse(wss_url));
+    // defer wss.deinit();
+    //
+    // var hello = try wss.readJson();
+    // try printJson(&hello, allocator);
 }
 
 fn printJson(j: *json.Value, allocator: Allocator) !void {
