@@ -2,6 +2,10 @@ const std = @import("std");
 const json = std.json;
 const http = std.http;
 const Allocator = std.mem.Allocator;
+const net = std.net;
+const posix = std.posix;
+const crypto = std.crypto;
+const base64 = std.base64;
 
 // TODO:
 // - try connect to WSS endpoint and parse hello event
@@ -69,12 +73,47 @@ pub fn main() !void {
 
     std.debug.print("WSS URL: {s}\n", .{wss_url});
 
-    // // try connect to WSS endpoint and parse hello event
-    // var wss = try http.WebSocket.connect(allocator, try std.Uri.parse(wss_url));
-    // defer wss.deinit();
-    //
-    // var hello = try wss.readJson();
-    // try printJson(&hello, allocator);
+    // connect to WebSocket endpoint
+}
+
+test {
+    const address = try std.net.Address.parseIp("127.0.0.1", 8765);
+    const tpe: u32 = posix.SOCK.STREAM;
+    const protocol = posix.IPPROTO.TCP;
+    const s = try posix.socket(address.any.family, tpe, protocol);
+    defer posix.close(s);
+
+    try posix.connect(s, &address.any, address.getOsSockLen());
+
+    // Generate a random WebSocket key
+    var random_bytes: [16]u8 = undefined;
+    crypto.random.bytes(&random_bytes);
+    var ws_key: [24]u8 = undefined;
+    _ = base64.standard.Encoder.encode(&ws_key, &random_bytes);
+
+    // Construct the WebSocket upgrade request
+    const request = try std.fmt.allocPrint(std.testing.allocator, "GET / HTTP/1.1\r\n" ++
+        "Host: localhost:8765\r\n" ++
+        "Upgrade: websocket\r\n" ++
+        "Connection: Upgrade\r\n" ++
+        "Sec-WebSocket-Key: {s}\r\n" ++
+        "Sec-WebSocket-Version: 13\r\n" ++
+        "\r\n", .{ws_key});
+    defer std.testing.allocator.free(request);
+
+    // Send the upgrade request
+    _ = try posix.write(s, request);
+
+    // Read the server's response
+    var buffer: [1024]u8 = undefined;
+    const bytes_read = try posix.read(s, &buffer);
+    const response = buffer[0..bytes_read];
+
+    // Print the response for debugging
+    std.debug.print("\nServer response:\n{s}\n", .{response});
+
+    // Verify we got a successful upgrade response
+    try std.testing.expect(std.mem.startsWith(u8, response, "HTTP/1.1 101"));
 }
 
 fn printJson(j: *json.Value, allocator: Allocator) !void {
