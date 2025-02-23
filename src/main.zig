@@ -106,7 +106,7 @@ test {
 
     // Read the server's response
     var buffer: [1024]u8 = undefined;
-    const bytes_read = try posix.read(s, &buffer);
+    var bytes_read = try posix.read(s, &buffer);
     const response = buffer[0..bytes_read];
 
     // Print the response for debugging
@@ -114,6 +114,48 @@ test {
 
     // Verify we got a successful upgrade response
     try std.testing.expect(std.mem.startsWith(u8, response, "HTTP/1.1 101"));
+
+    // After successful handshake, let's send a simple text message
+    // WebSocket frame format:
+    // - Byte 0: fin(1) + rsv(3) + opcode(4)  = 0x81 for text message
+    // - Byte 1: mask(1) + payload length(7)   = 0x80 | length
+    // - Bytes 2-5: masking key
+    // - Remaining bytes: masked payload
+
+    const text = "Hello WebSocket!";
+    const frame_header = [_]u8{
+        0x81, // Final frame, text message
+        0x80 | @as(u8, text.len), // Masked, length
+    };
+
+    // Generate random mask key
+    var mask_key: [4]u8 = undefined;
+    crypto.random.bytes(&mask_key);
+
+    // Mask the payload
+    var masked_payload: [text.len]u8 = undefined;
+    for (text, 0..) |byte, i| {
+        masked_payload[i] = byte ^ mask_key[i % 4];
+    }
+
+    // Send frame header
+    _ = try posix.write(s, &frame_header);
+    // Send mask key
+    _ = try posix.write(s, &mask_key);
+    // Send masked payload
+    _ = try posix.write(s, &masked_payload);
+
+    // Now wait for response
+    // FIXME: should I be reusing buffers like this?
+    bytes_read = try posix.read(s, &buffer);
+    std.debug.print("Received message: {any}\n", .{buffer[0..bytes_read]});
+
+    // Send close frame (optional but polite)
+    const close_frame = [_]u8{
+        0x88, // Final frame, close opcode
+        0x80, // Masked, zero length
+    } ++ mask_key;
+    _ = try posix.write(s, &close_frame);
 }
 
 fn printJson(j: *json.Value, allocator: Allocator) !void {
