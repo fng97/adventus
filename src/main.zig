@@ -205,6 +205,14 @@ test "echo" {
         0x80, // Masked, zero length
     } ++ maskKey();
     _ = try posix.write(s, &close_frame);
+
+    // Wait for close response from server
+    bytes_read = try posix.read(s, &buffer);
+    const close_response = buffer[0..bytes_read];
+
+    // Verify the close response (should be at least 2 bytes with close opcode)
+    try std.testing.expect(close_response.len >= 2);
+    try std.testing.expect(close_response[0] & 0b00001111 == 8); // opcode 8, close frame
 }
 
 fn printJson(j: *json.Value, allocator: Allocator) !void {
