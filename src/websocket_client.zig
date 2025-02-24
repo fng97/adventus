@@ -29,115 +29,148 @@ fn maskKey() [4]u8 {
     return m;
 }
 
-test "echo" {
-    const address = try std.net.Address.parseIp("127.0.0.1", 8765);
-    const tpe: u32 = std.posix.SOCK.STREAM;
-    const protocol = std.posix.IPPROTO.TCP;
-    const s = try std.posix.socket(address.any.family, tpe, protocol);
-    defer std.posix.close(s);
+fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u8 {
+    const host = "127.0.0.1";
+    const port = 9001;
 
-    try std.posix.connect(s, &address.any, address.getOsSockLen());
+    // CONNECT SOCKET
 
-    // Generate a random WebSocket key
+    const address = try std.net.Address.parseIp(host, port);
+    const socket = try std.posix.socket(address.any.family, std.posix.SOCK.STREAM, std.posix.IPPROTO.TCP);
+    defer std.posix.close(socket);
+    try std.posix.connect(socket, &address.any, address.getOsSockLen());
+
+    // UPGRADE TO WEBSOCKET CONNECTION
+
+    // generate random WebSocket key
+    var ws_key: [24]u8 = undefined;
     var random_bytes: [16]u8 = undefined;
     std.crypto.random.bytes(&random_bytes);
-    var ws_key: [24]u8 = undefined;
     _ = std.base64.standard.Encoder.encode(&ws_key, &random_bytes);
 
-    // Construct the WebSocket upgrade request
-    const request = try std.fmt.allocPrint(std.testing.allocator, "GET / HTTP/1.1\r\n" ++
-        "Host: localhost:8765\r\n" ++
+    const upgrade_request = try std.fmt.allocPrint(allocator, "GET {s} HTTP/1.1\r\n" ++
+        "Host: {s}:{d}\r\n" ++
         "Upgrade: websocket\r\n" ++
         "Connection: Upgrade\r\n" ++
         "Sec-WebSocket-Key: {s}\r\n" ++
         "Sec-WebSocket-Version: 13\r\n" ++
-        "\r\n", .{ws_key});
-    defer std.testing.allocator.free(request);
+        "\r\n", .{ path, host, port, ws_key });
+    defer allocator.free(upgrade_request);
 
-    // Send the upgrade request
-    _ = try std.posix.write(s, request);
+    // send the upgrade request
+    _ = try std.posix.write(socket, upgrade_request);
 
-    // Read the server's response
-    var buffer: [1024]u8 = undefined;
-    var bytes_read = try std.posix.read(s, &buffer);
-    const response = buffer[0..bytes_read];
+    // verify we got a successful upgrade response
+    var bytes_read = try std.posix.read(socket, buffer);
+    try std.testing.expect(std.mem.startsWith(u8, buffer, "HTTP/1.1 101"));
 
-    // Verify we got a successful upgrade response
-    try std.testing.expect(std.mem.startsWith(u8, response, "HTTP/1.1 101"));
+    // START PROCESSING FRAMES
 
-    // After successful handshake, let's send a simple text message
-    // WebSocket frame format:
-    // - Byte 0: fin(1) + rsv(3) + opcode(4)   = 0x81 for text message
-    // - Byte 1: mask(1) + payload length(7)   = 0x80 | length
-    // - Bytes 2-5: masking key
-    // - Remaining bytes: masked payload
+    // find end of HTTP response
+    var pos = std.mem.indexOf(u8, buffer, "\r\n\r\n").? + 4;
 
-    const text = "Hello WebSocket!";
-    const frame_header = [_]u8{
-        0x81, // Final frame, text message
-        0x80 | @as(u8, text.len), // Masked, length
-    };
+    // FIXME: use some kind of callback handler instead?
+    // need to be able to store messages when connecting to /getCaseCount
+    var case_count: ?[]u8 = null;
 
-    // Generate random mask key
-    const mask_key = maskKey();
+    while (true) { // one frame at a time
+        if (pos == bytes_read) { // read more if buffer is fully processed
+            bytes_read = try std.posix.read(socket, buffer);
+            if (bytes_read == 0) break;
+            pos = 0;
+        }
 
-    // Mask the payload
-    var masked_payload: [text.len]u8 = undefined;
-    for (text, 0..) |byte, i| {
-        masked_payload[i] = byte ^ mask_key[i % 4];
+        if (pos + 2 > bytes_read) continue;
+
+        // refer to frame structure at the top of this file
+        const frame_header = buffer[pos .. pos + 2];
+        pos += 2;
+
+        // first byte: check fin and opcode(ignoring rsvx)
+        const fin = frame_header[0] & 0b10000000 != 0;
+        try std.testing.expect(fin); // haven't got fragmentation yet
+        const opcode = frame_header[0] & 0b00001111;
+        // second byte: mask bit and payload size
+        try std.testing.expect(frame_header[1] & 0b10000000 == 0); // server messages not masked
+
+        // TODO: use a cool 'blk:' return here
+        // TODO: try a cool range switch statement here
+        const payload_len: u8 = frame_header[1] & 0b01111111; // response payload length same as payload sent
+        try std.testing.expect(payload_len <= 125); // TODO: handle larger payload sizes
+
+        // // check if we need to read further for payload length
+        // if (payload_len == 126) {
+        //     try std.testing.expect(pos + 2 > bytes_read); // TODO: handle not enough bytes
+        //     // TODO: read payload size
+        // } else if (payload_len == 127) {
+        //     try std.testing.expect(pos + 8 > bytes_read); // TODO: handle not enough bytes
+        //     // TODO: read payload size
+        // }
+
+        if (pos + payload_len > bytes_read) continue;
+
+        // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
+        const payload = buffer[pos .. pos + payload_len];
+        pos += payload_len;
+
+        if (case_count == null) {
+            case_count = payload;
+        }
+
+        switch (opcode) {
+            0x1 => std.debug.print("Received text: {s}\n", .{payload}),
+            0x8 => {
+                std.debug.print("Received close frame\n", .{});
+                const close_frame = [_]u8{
+                    // byte 0: fin bit == true (one frame) | (rsv not used) | opcode == 8 (close)
+                    0b10000000 | @as(u8, 8),
+                    // byte 1: mask bit == true (payload is masked) | message length
+                    0b10000000 | @as(u8, 0),
+                }
+                // bytes 2-5: mask key
+                ++ maskKey();
+
+                // send frame
+                _ = try std.posix.write(socket, &close_frame);
+
+                break; // disconnect
+            },
+            0x9 => std.debug.print("Received ping\n", .{}),
+            0xA => std.debug.print("Received pong\n", .{}),
+            else => std.debug.print("Unknown opcode: {x}\n", .{opcode}),
+        }
     }
 
-    // Send frame header
-    _ = try std.posix.write(s, &frame_header);
-    // Send mask key
-    _ = try std.posix.write(s, &mask_key);
-    // Send masked payload
-    _ = try std.posix.write(s, &masked_payload);
+    return case_count;
+}
 
-    // Now wait for response
-    bytes_read = try std.posix.read(s, &buffer);
+test "autobahn" {
+    // TODO: run (and stop) autobahn image from here
+    const allocator = std.testing.allocator;
 
-    // Check echo
+    var buffer: [1024]u8 = undefined;
 
-    const echo = buffer[0..bytes_read];
+    const response = try websocket(allocator, &buffer, "/getCaseCount");
 
-    // NOTE: We're checking a sequence of bytes here but some bytes, like the
-    // first one, encode multiple flags/data. We check a range of bits in the
-    // byte by ANDing (&) it with a mask (a byte with 1's for the bits we want
-    // to check). This zeroes out the bits we aren't checking.
-    //
-    // For example, if we wanted to check the first three bits of a byte:
-    //
-    // const byte: u8 = 0b10101100;
-    // const mask: u8 = 0b11100000;
-    // const expected: u8 = 0b10100000;
-    // try std.testing.expect(byte & mask == expected); // PASSES
+    if (response) |r| {
+        std.debug.print("Case count: {s}\n", .{r});
+        const case_count = try std.fmt.parseInt(u16, r, 10);
 
-    // first byte of header
-    try std.testing.expect(echo[0] & 0b10000000 != 0); // fin == 1, this frame is the whole message
-    try std.testing.expect(echo[0] & 0b01110000 == 0); // rsvx == 0, not using reserved extension bits
-    try std.testing.expect(echo[0] & 0b00001111 == 1); // opcode 1, text frame
+        for (1..case_count + 1) |case| {
+            std.debug.print("\nCASE {d}\n\n", .{case});
 
-    // second byte of header
-    try std.testing.expect(echo[1] & 0b10000000 == 0); // mask == 0, server messages not masked
-    try std.testing.expect(echo[1] & 0b01111111 == text.len); // response payload length same as payload sent
+            const path: []const u8 = try std.fmt.allocPrint(
+                allocator,
+                "/runCase?case={d}&agent=Adventus",
+                .{case},
+            );
+            defer allocator.free(path);
 
-    // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
-    const payload = echo[2 .. 2 + text.len];
-    try std.testing.expectEqualStrings(text, payload);
+            _ = try websocket(allocator, &buffer, path);
 
-    // Send close frame (optional but polite)
-    const close_frame = [_]u8{
-        0x88, // Final frame, close opcode
-        0x80, // Masked, zero length
-    } ++ maskKey();
-    _ = try std.posix.write(s, &close_frame);
+            // TODO: check the result somehow?
+        }
 
-    // Wait for close response from server
-    bytes_read = try std.posix.read(s, &buffer);
-    const close_response = buffer[0..bytes_read];
-
-    // Verify the close response (should be at least 2 bytes with close opcode)
-    try std.testing.expect(close_response.len >= 2);
-    try std.testing.expect(close_response[0] & 0b00001111 == 8); // opcode 8, close frame
+        _ = try websocket(allocator, &buffer, "/updateReports?agent=Adventus");
+    }
 }

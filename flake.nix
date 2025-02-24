@@ -9,11 +9,7 @@
         (system: f { pkgs = import nixpkgs { inherit system; }; });
     in {
       devShells = forEachSupportedSystem ({ pkgs }: {
-        default = pkgs.mkShell {
-          packages = with pkgs;
-            [ zig zls lldb python312 ]
-            ++ (with pkgs.python312Packages; [ websockets ]);
-        };
+        default = pkgs.mkShell { packages = with pkgs; [ zig zls lldb ]; };
       });
     };
 }
