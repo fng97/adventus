@@ -4,7 +4,6 @@ const http = std.http;
 const Allocator = std.mem.Allocator;
 const net = std.net;
 const posix = std.posix;
-const crypto = std.crypto;
 const base64 = std.base64;
 
 // TODO:
@@ -97,6 +96,12 @@ pub fn main() !void {
 //   |                     Payload Data continued ...                |
 //   +---------------------------------------------------------------+
 
+fn maskKey() [4]u8 {
+    var m: [4]u8 = undefined;
+    std.crypto.random.bytes(&m);
+    return m;
+}
+
 test "echo" {
     const address = try std.net.Address.parseIp("127.0.0.1", 8765);
     const tpe: u32 = posix.SOCK.STREAM;
@@ -108,7 +113,7 @@ test "echo" {
 
     // Generate a random WebSocket key
     var random_bytes: [16]u8 = undefined;
-    crypto.random.bytes(&random_bytes);
+    std.crypto.random.bytes(&random_bytes);
     var ws_key: [24]u8 = undefined;
     _ = base64.standard.Encoder.encode(&ws_key, &random_bytes);
 
@@ -147,8 +152,7 @@ test "echo" {
     };
 
     // Generate random mask key
-    var mask_key: [4]u8 = undefined;
-    crypto.random.bytes(&mask_key);
+    const mask_key = maskKey();
 
     // Mask the payload
     var masked_payload: [text.len]u8 = undefined;
@@ -199,7 +203,7 @@ test "echo" {
     const close_frame = [_]u8{
         0x88, // Final frame, close opcode
         0x80, // Masked, zero length
-    } ++ mask_key;
+    } ++ maskKey();
     _ = try posix.write(s, &close_frame);
 }
 
