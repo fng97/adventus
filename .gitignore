@@ -7,3 +7,4 @@ zig-out
 
 # macOS
 .DS_Store
+reports
