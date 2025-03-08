@@ -145,8 +145,37 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
 }
 
 test "autobahn" {
-    // TODO: run (and stop) autobahn image from here
     const allocator = std.testing.allocator;
+
+    // START AUTOBAHN FUZZING SERVER
+
+    std.debug.print("Starting Autobahn fuzzing server container\n", .{});
+
+    {
+        const argv = [_][]const u8{
+            "docker",
+            "run",
+            "--detach",
+            "--rm",
+            "--volume=./autobahn-testsuite:/mount",
+            "--publish=9001:9001",
+            "--name=fuzzingserver",
+            "crossbario/autobahn-testsuite",
+            "wstest",
+            "--mode=fuzzingserver",
+            "--spec=/mount/fuzzingserver.json",
+        };
+
+        const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &argv });
+        defer allocator.free(result.stderr);
+        defer allocator.free(result.stdout);
+
+        try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+    }
+
+    std.time.sleep(1_000_000_000); // wait 1 second for the server to start
+
+    // CHECK TEST CASE COUNT, RUN ALL TESTS, AND GENERATE REPORT
 
     var buffer: [1024]u8 = undefined;
 
@@ -167,10 +196,28 @@ test "autobahn" {
             defer allocator.free(path);
 
             _ = try websocket(allocator, &buffer, path);
-
-            // TODO: check the result somehow?
         }
 
         _ = try websocket(allocator, &buffer, "/updateReports?agent=Adventus");
     }
+
+    // STOP CONTAINER
+
+    {
+        const argv = [_][]const u8{
+            "docker",
+            "stop",
+            "fuzzingserver",
+        };
+
+        const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &argv });
+        defer allocator.free(result.stderr);
+        defer allocator.free(result.stdout);
+
+        try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+    }
+
+    std.debug.print("Stopped Autobahn fuzzing server container\n", .{});
+
+    // TODO: CHECK RESULTS BY COMPARING TO EXPECTED INDEX.JSON
 }
