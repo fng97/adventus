@@ -131,10 +131,8 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
                 write_buffer[1] = 0x80 | @as(u8, @truncate(payload.len));
                 write_buffer[2..6].* = mask_key;
 
-                var j: usize = 0;
                 for (payload, 6..) |byte, i| {
-                    write_buffer[i] = byte ^ mask_key[j % 4];
-                    j += 1;
+                    write_buffer[i] = byte ^ mask_key[(i - 6) % 4]; // re-use i for mask, must start at 0
                 }
 
                 _ = try std.posix.write(socket, write_buffer[0 .. 6 + payload.len]);
