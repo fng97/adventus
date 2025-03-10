@@ -7,4 +7,6 @@ zig-out
 
 # macOS
 .DS_Store
-reports
+
+# wstest results
+autobahn-testsuite/reports
