@@ -226,6 +226,12 @@ test "autobahn" {
         std.debug.print("Case count: {s}\n", .{r});
         const case_count = try std.fmt.parseInt(u16, r, 10);
 
+        defer _ = websocket(
+            allocator,
+            &buffer,
+            "/updateReports?agent=Adventus",
+        ) catch @panic("Failed to generate wstest report\n");
+
         for (1..case_count + 1) |case| {
             std.debug.print("\nCASE {d}\n\n", .{case});
 
@@ -238,8 +244,6 @@ test "autobahn" {
 
             _ = try websocket(allocator, &buffer, path);
         }
-
-        _ = try websocket(allocator, &buffer, "/updateReports?agent=Adventus");
     }
 
     // TODO: CHECK RESULTS BY COMPARING TO EXPECTED INDEX.JSON
