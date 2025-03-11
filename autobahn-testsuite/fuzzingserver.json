@@ -1,7 +1,7 @@
 {
   "url": "ws://127.0.0.1:9001",
   "outdir": "/mount/reports",
-  "cases": ["1.1.1", "1.1.2", "1.1.3"],
+  "cases": ["1.1.1", "1.1.2", "1.1.3", "1.1.4", "1.1.5"],
   "exclude-cases": [],
   "exclude-agent-cases": {}
 }
