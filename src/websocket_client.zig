@@ -66,6 +66,8 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
 
     // START PROCESSING FRAMES
 
+    var write_buffer: [1024]u8 = undefined;
+
     // find end of HTTP response
     var pos = std.mem.indexOf(u8, buffer, "\r\n\r\n").? + 4;
 
@@ -93,21 +95,28 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
         // second byte: mask bit and payload size
         try std.testing.expect(frame_header[1] & 0b10000000 == 0); // server messages not masked
 
-        // TODO: use a cool 'blk:' return here
-        // TODO: try a cool range switch statement here
-        const payload_len: u8 = frame_header[1] & 0b01111111; // response payload length same as payload sent
-        try std.testing.expect(payload_len <= 125); // TODO: handle larger payload sizes
-
-        // // check if we need to read further for payload length
-        // if (payload_len == 126) {
-        //     try std.testing.expect(pos + 2 > bytes_read); // TODO: handle not enough bytes
-        //     // TODO: read payload size
-        // } else if (payload_len == 127) {
-        //     try std.testing.expect(pos + 8 > bytes_read); // TODO: handle not enough bytes
-        //     // TODO: read payload size
-        // }
-
-        if (pos + payload_len > bytes_read) continue;
+        const short_payload_len: u8 = frame_header[1] & 0b01111111;
+        // FIXME: handle not having enough bytes
+        const payload_len = switch (short_payload_len) { // keep in mind network byte ordering (big endian)
+            0...125 => short_payload_len,
+            126 => blk: {
+                const payload_len = std.mem.bigToNative(
+                    u16,
+                    std.mem.bytesToValue(u16, buffer[pos .. pos + 2]),
+                );
+                pos += 2;
+                break :blk payload_len;
+            },
+            127 => blk: {
+                const payload_len = std.mem.bigToNative(
+                    u64,
+                    std.mem.bytesToValue(u64, buffer[pos .. pos + 8]),
+                );
+                pos += 8;
+                break :blk payload_len;
+            },
+            else => unreachable,
+        };
 
         // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
         const payload = buffer[pos .. pos + payload_len];
@@ -118,7 +127,53 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
         }
 
         switch (opcode) {
-            0x1 => std.debug.print("Received text: {s}\n", .{payload}),
+            0x1 => {
+                // wstest expects echo
+                std.debug.print("Received text: {s}\n", .{payload});
+
+                const mask_key = maskKey();
+
+                const short_len: u8 = switch (payload.len) {
+                    0...125 => @intCast(payload.len), // direct payload length in 7 bits
+                    126...std.math.maxInt(u16) => 126, // use 16-bit extended length
+                    (std.math.maxInt(u16) + 1)...std.math.maxInt(u64) => 127, // use 64-bit extended length
+                };
+
+                write_buffer[0] = 0x81; // fin == 1, opcode == 1 (text)
+                write_buffer[1] = 0x80 | @as(u8, short_len);
+
+                var write_pos: usize = 2;
+
+                // append extended payload length if necessary
+                if (short_len == 126) {
+                    std.mem.writeInt(
+                        u16,
+                        write_buffer[write_pos..][0..2],
+                        @as(u16, @intCast(payload.len)),
+                        .big,
+                    );
+                    write_pos += 2;
+                } else if (short_len == 127) {
+                    std.mem.writeInt(
+                        u64,
+                        write_buffer[write_pos..][0..8],
+                        @as(u64, @intCast(payload.len)),
+                        .big,
+                    );
+                    write_pos += 8;
+                }
+
+                std.mem.copyForwards(u8, write_buffer[write_pos .. write_pos + 4], &mask_key);
+                write_pos += 4;
+
+                for (payload, 0..) |byte, i| {
+                    write_buffer[write_pos + i] = byte ^ mask_key[i % 4];
+                }
+
+                std.debug.print("Sending echo\n", .{});
+
+                _ = try std.posix.write(socket, write_buffer[0 .. write_pos + payload.len]);
+            },
             0x8 => {
                 std.debug.print("Received close frame\n", .{});
                 const close_frame = [_]u8{
@@ -145,8 +200,60 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
 }
 
 test "autobahn" {
-    // TODO: run (and stop) autobahn image from here
     const allocator = std.testing.allocator;
+
+    // START AUTOBAHN FUZZING SERVER
+
+    std.debug.print("Starting Autobahn fuzzing server container\n", .{});
+
+    {
+        const argv = [_][]const u8{
+            "docker",
+            "run",
+            "--detach",
+            "--rm",
+            "--volume=./autobahn-testsuite:/mount",
+            "--publish=9001:9001",
+            "--name=fuzzingserver",
+            "crossbario/autobahn-testsuite",
+            "wstest",
+            "--mode=fuzzingserver",
+            "--spec=/mount/fuzzingserver.json",
+        };
+
+        const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &argv });
+        defer allocator.free(result.stderr);
+        defer allocator.free(result.stdout);
+
+        try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+    }
+
+    defer {
+        const argv = [_][]const u8{
+            "docker",
+            "stop",
+            "fuzzingserver",
+        };
+
+        const result = std.process.Child.run(.{
+            .allocator = allocator,
+            .argv = &argv,
+        }) catch @panic("Failed to execute docker stop");
+
+        defer allocator.free(result.stderr);
+        defer allocator.free(result.stdout);
+
+        std.testing.expectEqual(
+            std.process.Child.Term{ .Exited = 0 },
+            result.term,
+        ) catch @panic("Failed to stop docker container"); // try not allowed in defer block
+
+        std.debug.print("Stopped Autobahn fuzzing server container\n", .{});
+    }
+
+    std.time.sleep(1_000_000_000); // wait for the server to start
+
+    // CHECK TEST CASE COUNT, RUN ALL TESTS, AND GENERATE REPORT
 
     var buffer: [1024]u8 = undefined;
 
@@ -155,6 +262,12 @@ test "autobahn" {
     if (response) |r| {
         std.debug.print("Case count: {s}\n", .{r});
         const case_count = try std.fmt.parseInt(u16, r, 10);
+
+        defer _ = websocket(
+            allocator,
+            &buffer,
+            "/updateReports?agent=Adventus",
+        ) catch @panic("Failed to generate wstest report\n");
 
         for (1..case_count + 1) |case| {
             std.debug.print("\nCASE {d}\n\n", .{case});
@@ -167,10 +280,8 @@ test "autobahn" {
             defer allocator.free(path);
 
             _ = try websocket(allocator, &buffer, path);
-
-            // TODO: check the result somehow?
         }
-
-        _ = try websocket(allocator, &buffer, "/updateReports?agent=Adventus");
     }
+
+    // TODO: CHECK RESULTS BY COMPARING TO EXPECTED INDEX.JSON
 }
