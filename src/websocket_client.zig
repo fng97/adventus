@@ -29,7 +29,10 @@ fn maskKey() [4]u8 {
     return m;
 }
 
-fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u8 {
+fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: []const u8) !void {
+    var read_buffer: [1024 * 100]u8 = undefined; // 100 KB read buffer
+    var write_buffer: [1024 * 100]u8 = undefined; // 100 KB write buffer
+
     const host = "127.0.0.1";
     const port = 9001;
 
@@ -61,31 +64,34 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
     _ = try std.posix.write(socket, upgrade_request);
 
     // verify we got a successful upgrade response
-    var bytes_read = try std.posix.read(socket, buffer);
-    try std.testing.expect(std.mem.startsWith(u8, buffer, "HTTP/1.1 101"));
+    var bytes_read = try std.posix.read(socket, &read_buffer);
+    std.debug.print("Bytes read: {d}\n", .{bytes_read});
+    try std.testing.expect(std.mem.startsWith(u8, &read_buffer, "HTTP/1.1 101"));
 
     // START PROCESSING FRAMES
 
-    var write_buffer: [1024]u8 = undefined;
-
     // find end of HTTP response
-    var pos = std.mem.indexOf(u8, buffer, "\r\n\r\n").? + 4;
+    var pos = std.mem.indexOf(u8, &read_buffer, "\r\n\r\n").? + 4;
 
-    // FIXME: use some kind of callback handler instead?
-    // need to be able to store messages when connecting to /getCaseCount
-    var case_count: ?[]u8 = null;
-
-    while (true) { // one frame at a time
+    outer: while (true) { // one frame at a time
+        std.debug.print("READ LOOP\n", .{});
         if (pos == bytes_read) { // read more if buffer is fully processed
-            bytes_read = try std.posix.read(socket, buffer);
-            if (bytes_read == 0) break;
+            bytes_read = try std.posix.read(socket, &read_buffer);
+            if (bytes_read == 0) {
+                std.debug.print("BREAK READ LOOP\n", .{});
+            }
             pos = 0;
         }
 
-        if (pos + 2 > bytes_read) continue;
+        if (pos + 2 > bytes_read) {
+            std.debug.print(
+                "Not enough bytes to read header... Read again\n",
+                .{},
+            );
+        }
 
         // refer to frame structure at the top of this file
-        const frame_header = buffer[pos .. pos + 2];
+        const frame_header = read_buffer[pos .. pos + 2];
         pos += 2;
 
         // first byte: check fin and opcode(ignoring rsvx)
@@ -102,7 +108,7 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
             126 => blk: {
                 const payload_len = std.mem.bigToNative(
                     u16,
-                    std.mem.bytesToValue(u16, buffer[pos .. pos + 2]),
+                    std.mem.bytesToValue(u16, read_buffer[pos .. pos + 2]),
                 );
                 pos += 2;
                 break :blk payload_len;
@@ -110,7 +116,7 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
             127 => blk: {
                 const payload_len = std.mem.bigToNative(
                     u64,
-                    std.mem.bytesToValue(u64, buffer[pos .. pos + 8]),
+                    std.mem.bytesToValue(u64, read_buffer[pos .. pos + 8]),
                 );
                 pos += 8;
                 break :blk payload_len;
@@ -119,17 +125,15 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
         };
 
         // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
-        const payload = buffer[pos .. pos + payload_len];
+        const payload = read_buffer[pos .. pos + payload_len];
         pos += payload_len;
-
-        if (case_count == null) {
-            case_count = payload;
-        }
 
         switch (opcode) {
             0x1 => {
                 // wstest expects echo
                 std.debug.print("Received text: {s}\n", .{payload});
+
+                handler(payload);
 
                 const mask_key = maskKey();
 
@@ -182,22 +186,33 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
                     // byte 1: mask bit == true (payload is masked) | message length
                     0b10000000 | @as(u8, 0),
                 }
-                // bytes 2-5: mask key
-                ++ maskKey();
+                    // bytes 2-5: mask key
+                    ++ maskKey();
 
                 // send frame
                 _ = try std.posix.write(socket, &close_frame);
 
-                break; // disconnect
+                break :outer; // disconnect
             },
             0x9 => std.debug.print("Received ping\n", .{}),
             0xA => std.debug.print("Received pong\n", .{}),
             else => std.debug.print("Unknown opcode: {x}\n", .{opcode}),
         }
     }
-
-    return case_count;
 }
+
+var case_count: usize = undefined;
+
+fn setCaseCount(payload: []const u8) void {
+    std.debug.print("Case count: {s}\n", .{payload});
+    case_count = std.fmt.parseInt(
+        u16,
+        payload,
+        10,
+    ) catch @panic("Failed to parse case count");
+}
+
+fn nop(_: []const u8) void {}
 
 test "autobahn" {
     const allocator = std.testing.allocator;
@@ -255,32 +270,28 @@ test "autobahn" {
 
     // CHECK TEST CASE COUNT, RUN ALL TESTS, AND GENERATE REPORT
 
-    var buffer: [1024]u8 = undefined;
+    try websocket(allocator, setCaseCount, "/getCaseCount");
 
-    const response = try websocket(allocator, &buffer, "/getCaseCount");
-
-    if (response) |r| {
-        std.debug.print("Case count: {s}\n", .{r});
-        const case_count = try std.fmt.parseInt(u16, r, 10);
-
-        defer _ = websocket(
+    defer {
+        std.debug.print("\nGenerating results report\n", .{});
+        websocket(
             allocator,
-            &buffer,
+            nop,
             "/updateReports?agent=Adventus",
         ) catch @panic("Failed to generate wstest report\n");
+    }
 
-        for (1..case_count + 1) |case| {
-            std.debug.print("\nCASE {d}\n\n", .{case});
+    for (1..case_count + 1) |case| {
+        std.debug.print("\nCASE {d}\n\n", .{case});
 
-            const path: []const u8 = try std.fmt.allocPrint(
-                allocator,
-                "/runCase?case={d}&agent=Adventus",
-                .{case},
-            );
-            defer allocator.free(path);
+        const path: []const u8 = try std.fmt.allocPrint(
+            allocator,
+            "/runCase?case={d}&agent=Adventus",
+            .{case},
+        );
+        defer allocator.free(path);
 
-            _ = try websocket(allocator, &buffer, path);
-        }
+        try websocket(allocator, nop, path);
     }
 
     // TODO: CHECK RESULTS BY COMPARING TO EXPECTED INDEX.JSON
