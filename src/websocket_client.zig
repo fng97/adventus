@@ -29,16 +29,18 @@ fn maskKey() [4]u8 {
     return m;
 }
 
-fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u8 {
+fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: []const u8) !void {
     const host = "127.0.0.1";
     const port = 9001;
 
     // CONNECT SOCKET
 
     const address = try std.net.Address.parseIp(host, port);
-    const socket = try std.posix.socket(address.any.family, std.posix.SOCK.STREAM, std.posix.IPPROTO.TCP);
-    defer std.posix.close(socket);
-    try std.posix.connect(socket, &address.any, address.getOsSockLen());
+    const stream = try std.net.tcpConnectToAddress(address);
+    defer stream.close();
+
+    const reader = stream.reader();
+    const writer = stream.writer();
 
     // UPGRADE TO WEBSOCKET CONNECTION
 
@@ -58,121 +60,122 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
     defer allocator.free(upgrade_request);
 
     // send the upgrade request
-    _ = try std.posix.write(socket, upgrade_request);
+    try writer.writeAll(upgrade_request);
 
     // verify we got a successful upgrade response
-    var bytes_read = try std.posix.read(socket, buffer);
-    try std.testing.expect(std.mem.startsWith(u8, buffer, "HTTP/1.1 101"));
+    var response_buffer = std.ArrayList(u8).init(allocator);
+    defer response_buffer.deinit();
+
+    const delimiter = "\r\n\r\n"; // (end of HTTP headers)
+
+    while (true) { // this is probably slower than it should be, but we only do it once
+        const byte = try reader.readByte();
+        try response_buffer.append(byte);
+
+        if (response_buffer.items.len >= delimiter.len) {
+            const tail = response_buffer.items[(response_buffer.items.len - delimiter.len)..];
+            if (std.mem.eql(u8, tail, delimiter)) break;
+        }
+    }
+
+    try std.testing.expect(std.mem.startsWith(u8, response_buffer.items, "HTTP/1.1 101"));
 
     // START PROCESSING FRAMES
 
-    var write_buffer: [1024]u8 = undefined;
+    outer: while (true) { // one frame at a time, refer to frame structure at the top of this file
+        std.debug.print("READ LOOP\n", .{});
 
-    // find end of HTTP response
-    var pos = std.mem.indexOf(u8, buffer, "\r\n\r\n").? + 4;
-
-    // FIXME: use some kind of callback handler instead?
-    // need to be able to store messages when connecting to /getCaseCount
-    var case_count: ?[]u8 = null;
-
-    while (true) { // one frame at a time
-        if (pos == bytes_read) { // read more if buffer is fully processed
-            bytes_read = try std.posix.read(socket, buffer);
-            if (bytes_read == 0) break;
-            pos = 0;
-        }
-
-        if (pos + 2 > bytes_read) continue;
-
-        // refer to frame structure at the top of this file
-        const frame_header = buffer[pos .. pos + 2];
-        pos += 2;
+        const frame_header = try reader.readBytesNoEof(2);
 
         // first byte: check fin and opcode(ignoring rsvx)
         const fin = frame_header[0] & 0b10000000 != 0;
         try std.testing.expect(fin); // haven't got fragmentation yet
         const opcode = frame_header[0] & 0b00001111;
-        // second byte: mask bit and payload size
-        try std.testing.expect(frame_header[1] & 0b10000000 == 0); // server messages not masked
 
-        const short_payload_len: u8 = frame_header[1] & 0b01111111;
-        // FIXME: handle not having enough bytes
-        const payload_len = switch (short_payload_len) { // keep in mind network byte ordering (big endian)
-            0...125 => short_payload_len,
+        // second byte: mask bit and payload size
+        const is_masked = (frame_header[1] & 0b10000000) != 0;
+        try std.testing.expect(!is_masked); // server messages not masked
+        const len_byte: u8 = frame_header[1] & 0b01111111;
+
+        const payload_len = switch (len_byte) { // keep in mind network byte ordering (big endian)
+            0...125 => len_byte,
             126 => blk: {
-                const payload_len = std.mem.bigToNative(
+                const len_bytes = try reader.readBytesNoEof(2);
+                break :blk std.mem.bigToNative(
                     u16,
-                    std.mem.bytesToValue(u16, buffer[pos .. pos + 2]),
+                    std.mem.bytesToValue(u16, &len_bytes),
                 );
-                pos += 2;
-                break :blk payload_len;
             },
             127 => blk: {
-                const payload_len = std.mem.bigToNative(
+                const len_bytes = try reader.readBytesNoEof(8);
+                break :blk std.mem.bigToNative(
                     u64,
-                    std.mem.bytesToValue(u64, buffer[pos .. pos + 8]),
+                    std.mem.bytesToValue(u64, &len_bytes),
                 );
-                pos += 8;
-                break :blk payload_len;
             },
             else => unreachable,
         };
 
         // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
-        const payload = buffer[pos .. pos + payload_len];
-        pos += payload_len;
+        const payload = try allocator.alloc(u8, payload_len);
+        defer allocator.free(payload);
 
-        if (case_count == null) {
-            case_count = payload;
-        }
+        try reader.readNoEof(payload);
 
         switch (opcode) {
             0x1 => {
                 // wstest expects echo
                 std.debug.print("Received text: {s}\n", .{payload});
-
-                const mask_key = maskKey();
-
-                const short_len: u8 = switch (payload.len) {
-                    0...125 => @intCast(payload.len), // direct payload length in 7 bits
-                    126...std.math.maxInt(u16) => 126, // use 16-bit extended length
-                    (std.math.maxInt(u16) + 1)...std.math.maxInt(u64) => 127, // use 64-bit extended length
-                };
-
-                write_buffer[0] = 0x81; // fin == 1, opcode == 1 (text)
-                write_buffer[1] = 0x80 | @as(u8, short_len);
-
-                var write_pos: usize = 2;
-
-                // append extended payload length if necessary
-                if (short_len == 126) {
-                    std.mem.writeInt(
-                        u16,
-                        write_buffer[write_pos..][0..2],
-                        @as(u16, @intCast(payload.len)),
-                        .big,
-                    );
-                    write_pos += 2;
-                } else if (short_len == 127) {
-                    std.mem.writeInt(
-                        u64,
-                        write_buffer[write_pos..][0..8],
-                        @as(u64, @intCast(payload.len)),
-                        .big,
-                    );
-                    write_pos += 8;
-                }
-
-                std.mem.copyForwards(u8, write_buffer[write_pos .. write_pos + 4], &mask_key);
-                write_pos += 4;
-
-                for (payload, 0..) |byte, i| {
-                    write_buffer[write_pos + i] = byte ^ mask_key[i % 4];
-                }
-
                 std.debug.print("Sending echo\n", .{});
 
-                _ = try std.posix.write(socket, write_buffer[0 .. write_pos + payload.len]);
+                handler(payload);
+
+                const mask_key = maskKey();
+                var header: [14]u8 = undefined; // max header size: 2 (min) + 8 (extended payload len) + 4 (mask key)
+                var header_len: usize = 2;
+
+                header[0] = 0x81; // fin == 1, opcode == 1 (text)
+
+                switch (payload.len) {
+                    0...125 => { // fits in 7-bit length
+                        header[1] = 0x80 | @as(u8, @intCast(payload.len));
+                    },
+                    126...std.math.maxInt(u16) => { // use 16-bit extended length
+                        header[1] = 0x80 | 126;
+                        std.mem.writeInt(
+                            u16,
+                            header[2..4],
+                            @as(u16, @intCast(payload.len)),
+                            .big,
+                        );
+                        header_len += 2;
+                    },
+                    (std.math.maxInt(u16) + 1)...std.math.maxInt(u64) => { // use 64-bit extended length
+                        header[1] = 0x80 | 127;
+                        std.mem.writeInt(
+                            u64,
+                            header[2..10],
+                            @as(u64, payload.len),
+                            .big,
+                        );
+                        header_len += 8;
+                    },
+                }
+
+                std.mem.copyForwards(u8, header[header_len..][0..4], &mask_key);
+                header_len += 4;
+
+                // send header
+                try writer.writeAll(header[0..header_len]);
+
+                var pld = try allocator.alloc(u8, payload_len);
+                defer allocator.free(pld);
+
+                for (payload, 0..) |byte, i| {
+                    pld[i] = byte ^ mask_key[i % 4];
+                }
+
+                try writer.writeAll(pld);
             },
             0x8 => {
                 std.debug.print("Received close frame\n", .{});
@@ -182,22 +185,33 @@ fn websocket(allocator: std.mem.Allocator, buffer: []u8, path: []const u8) !?[]u
                     // byte 1: mask bit == true (payload is masked) | message length
                     0b10000000 | @as(u8, 0),
                 }
-                // bytes 2-5: mask key
-                ++ maskKey();
+                    // bytes 2-5: mask key
+                    ++ maskKey();
 
                 // send frame
-                _ = try std.posix.write(socket, &close_frame);
+                try writer.writeAll(&close_frame);
 
-                break; // disconnect
+                break :outer; // disconnect
             },
             0x9 => std.debug.print("Received ping\n", .{}),
             0xA => std.debug.print("Received pong\n", .{}),
             else => std.debug.print("Unknown opcode: {x}\n", .{opcode}),
         }
     }
-
-    return case_count;
 }
+
+var case_count: usize = undefined;
+
+fn setCaseCount(payload: []const u8) void {
+    std.debug.print("Case count: {s}\n", .{payload});
+    case_count = std.fmt.parseInt(
+        u16,
+        payload,
+        10,
+    ) catch @panic("Failed to parse case count");
+}
+
+fn nop(_: []const u8) void {}
 
 test "autobahn" {
     const allocator = std.testing.allocator;
@@ -255,32 +269,28 @@ test "autobahn" {
 
     // CHECK TEST CASE COUNT, RUN ALL TESTS, AND GENERATE REPORT
 
-    var buffer: [1024]u8 = undefined;
+    try websocket(allocator, setCaseCount, "/getCaseCount");
 
-    const response = try websocket(allocator, &buffer, "/getCaseCount");
-
-    if (response) |r| {
-        std.debug.print("Case count: {s}\n", .{r});
-        const case_count = try std.fmt.parseInt(u16, r, 10);
-
-        defer _ = websocket(
+    defer {
+        std.debug.print("\nGenerating results report\n", .{});
+        websocket(
             allocator,
-            &buffer,
+            nop,
             "/updateReports?agent=Adventus",
         ) catch @panic("Failed to generate wstest report\n");
+    }
 
-        for (1..case_count + 1) |case| {
-            std.debug.print("\nCASE {d}\n\n", .{case});
+    for (1..case_count + 1) |case| {
+        std.debug.print("\nCASE {d}\n\n", .{case});
 
-            const path: []const u8 = try std.fmt.allocPrint(
-                allocator,
-                "/runCase?case={d}&agent=Adventus",
-                .{case},
-            );
-            defer allocator.free(path);
+        const path: []const u8 = try std.fmt.allocPrint(
+            allocator,
+            "/runCase?case={d}&agent=Adventus",
+            .{case},
+        );
+        defer allocator.free(path);
 
-            _ = try websocket(allocator, &buffer, path);
-        }
+        try websocket(allocator, nop, path);
     }
 
     // TODO: CHECK RESULTS BY COMPARING TO EXPECTED INDEX.JSON
