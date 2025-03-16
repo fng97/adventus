@@ -23,6 +23,15 @@ const std = @import("std");
 //  |                     Payload Data continued ...                |
 //  +---------------------------------------------------------------+
 
+pub const Opcode = enum(u8) {
+    continuation = 0x0,
+    text = 0x1,
+    binary = 0x2,
+    close = 0x8,
+    ping = 0x9,
+    pong = 0xA,
+};
+
 fn maskKey() [4]u8 {
     var m: [4]u8 = undefined;
     std.crypto.random.bytes(&m);
@@ -94,7 +103,7 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
         // first byte: check fin and opcode(ignoring rsvx)
         const fin = frame_header[0] & 0b10000000 != 0;
         try std.testing.expect(fin); // haven't got fragmentation yet
-        const opcode = frame_header[0] & 0b00001111;
+        const opcode: Opcode = @enumFromInt(frame_header[0] & 0b00001111);
 
         // second byte: mask bit and payload size
         const is_masked = (frame_header[1] & 0b10000000) != 0;
@@ -127,11 +136,11 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
         try reader.readNoEof(payload);
 
         switch (opcode) {
-            0x1, 0x2 => |op| {
-                std.debug.print(
-                    "Received {d} bytes of {s}\n",
-                    .{ payload.len, if (op == 0x1) "text" else "binary" },
-                );
+            .text, .binary => |op| {
+                std.debug.print("Received {d} bytes of {s}\n", .{
+                    payload.len,
+                    if (op == Opcode.text) "text" else "binary",
+                });
 
                 handler(payload);
 
@@ -139,7 +148,7 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
                 var header: [14]u8 = undefined; // max header size: 2 (min) + 8 (extended payload len) + 4 (mask key)
                 var header_len: usize = 2;
 
-                header[0] = 0x80 | op; // fin == 1, opcode == 1 (text)
+                header[0] = 0x80 | @intFromEnum(op); // fin == 1, opcode == 1 (text)
 
                 switch (payload.len) {
                     0...125 => { // fits in 7-bit length
@@ -184,7 +193,7 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
                 std.debug.print("Echoing message back to server\n", .{});
                 try writer.writeAll(pld);
             },
-            0x8 => {
+            .close => {
                 std.debug.print("Received close frame\n", .{});
                 const close_frame = [_]u8{
                     // byte 0: fin bit == true (one frame) | (rsv not used) | opcode == 8 (close)
@@ -200,9 +209,9 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
 
                 break :outer; // disconnect
             },
-            0x9 => std.debug.print("Received ping\n", .{}),
-            0xA => std.debug.print("Received pong\n", .{}),
-            else => std.debug.print("Unknown opcode: {x}\n", .{opcode}),
+            .ping => std.debug.print("Received ping\n", .{}),
+            .pong => std.debug.print("Received pong\n", .{}),
+            else => std.debug.print("Unknown opcode: {x}\n", .{@intFromEnum(opcode)}),
         }
     }
 }
