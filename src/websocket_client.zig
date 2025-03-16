@@ -127,8 +127,11 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
         try reader.readNoEof(payload);
 
         switch (opcode) {
-            0x1 => {
-                std.debug.print("Received {d} bytes of text\n", .{payload.len});
+            0x1, 0x2 => |op| {
+                std.debug.print(
+                    "Received {d} bytes of {s}\n",
+                    .{ payload.len, if (op == 0x1) "text" else "binary" },
+                );
 
                 handler(payload);
 
@@ -136,7 +139,7 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
                 var header: [14]u8 = undefined; // max header size: 2 (min) + 8 (extended payload len) + 4 (mask key)
                 var header_len: usize = 2;
 
-                header[0] = 0x81; // fin == 1, opcode == 1 (text)
+                header[0] = 0x80 | op; // fin == 1, opcode == 1 (text)
 
                 switch (payload.len) {
                     0...125 => { // fits in 7-bit length
