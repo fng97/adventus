@@ -2,6 +2,8 @@
 
 ## Optimisations to try
 
+- store payload on the stack and if too big require handler to work in chunks
+
 ### Write to socket stream in chunks to use less memory?
 
 ```zig

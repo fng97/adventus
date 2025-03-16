@@ -36,6 +36,7 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
     // CONNECT SOCKET
 
     const address = try std.net.Address.parseIp(host, port);
+    std.debug.print("Connecting WebSocket client\n", .{});
     const stream = try std.net.tcpConnectToAddress(address);
     defer stream.close();
 
@@ -60,18 +61,21 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
     defer allocator.free(upgrade_request);
 
     // send the upgrade request
+    std.debug.print("Sending upgrade request\n", .{});
     try writer.writeAll(upgrade_request);
 
-    // verify we got a successful upgrade response
+    // VERIFY WE GOT A SUCCESSFUL UPGRADE RESPONSE
+
     var response_buffer = std.ArrayList(u8).init(allocator);
     defer response_buffer.deinit();
 
     const delimiter = "\r\n\r\n"; // (end of HTTP headers)
 
-    while (true) { // this is probably slower than it should be, but we only do it once
+    while (true) { // read until end of HTTP headers
         const byte = try reader.readByte();
         try response_buffer.append(byte);
 
+        // check last four bytes for delimiter
         if (response_buffer.items.len >= delimiter.len) {
             const tail = response_buffer.items[(response_buffer.items.len - delimiter.len)..];
             if (std.mem.eql(u8, tail, delimiter)) break;
@@ -83,7 +87,7 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
     // START PROCESSING FRAMES
 
     outer: while (true) { // one frame at a time, refer to frame structure at the top of this file
-        std.debug.print("READ LOOP\n", .{});
+        std.debug.print("Reading frame\n", .{});
 
         const frame_header = try reader.readBytesNoEof(2);
 
@@ -123,10 +127,11 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
         try reader.readNoEof(payload);
 
         switch (opcode) {
-            0x1 => {
-                // wstest expects echo
-                std.debug.print("Received text: {s}\n", .{payload});
-                std.debug.print("Sending echo\n", .{});
+            0x1, 0x2 => |op| {
+                std.debug.print(
+                    "Received {d} bytes of {s}\n",
+                    .{ payload.len, if (op == 0x1) "text" else "binary" },
+                );
 
                 handler(payload);
 
@@ -134,7 +139,7 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
                 var header: [14]u8 = undefined; // max header size: 2 (min) + 8 (extended payload len) + 4 (mask key)
                 var header_len: usize = 2;
 
-                header[0] = 0x81; // fin == 1, opcode == 1 (text)
+                header[0] = 0x80 | op; // fin == 1, opcode == 1 (text)
 
                 switch (payload.len) {
                     0...125 => { // fits in 7-bit length
@@ -175,6 +180,8 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
                     pld[i] = byte ^ mask_key[i % 4];
                 }
 
+                // wstest expects echo
+                std.debug.print("Echoing message back to server\n", .{});
                 try writer.writeAll(pld);
             },
             0x8 => {
@@ -269,10 +276,11 @@ test "autobahn" {
 
     // CHECK TEST CASE COUNT, RUN ALL TESTS, AND GENERATE REPORT
 
+    std.debug.print("\nGETTING CASE COUNT\n\n", .{});
     try websocket(allocator, setCaseCount, "/getCaseCount");
 
     defer {
-        std.debug.print("\nGenerating results report\n", .{});
+        std.debug.print("\nGENERATING RESULTS REPORT\n\n", .{});
         websocket(
             allocator,
             nop,
