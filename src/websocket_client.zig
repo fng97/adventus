@@ -23,7 +23,7 @@ const std = @import("std");
 //  |                     Payload Data continued ...                |
 //  +---------------------------------------------------------------+
 
-pub const Opcode = enum(u8) {
+const Opcode = enum(u8) {
     continuation = 0x0,
     text = 0x1,
     binary = 0x2,
@@ -31,6 +31,13 @@ pub const Opcode = enum(u8) {
     ping = 0x9,
     pong = 0xA,
 };
+
+// const FrameHeader = struct {
+//     fin: bool,
+//     opcode: Opcode,
+//     masked: bool,
+//     payload_len: usize,
+// };
 
 fn maskKey() [4]u8 {
     var m: [4]u8 = undefined;
@@ -136,19 +143,41 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
         try reader.readNoEof(payload);
 
         switch (opcode) {
-            .text, .binary => |op| {
-                std.debug.print("Received {d} bytes of {s}\n", .{
-                    payload.len,
-                    if (op == Opcode.text) "text" else "binary",
-                });
+            .text, .binary, .ping => |op| {
+                std.debug.print(
+                    "Received {s} frame with a {d}-byte payload\n",
+                    .{
+                        switch (op) {
+                            .text => "text",
+                            .binary => "binary",
+                            .ping => "ping",
+                            else => unreachable,
+                        },
+                        payload.len,
+                    },
+                );
 
-                handler(payload);
+                if (op == Opcode.ping) {
+                    if (payload.len > 125) {
+                        std.debug.print("Control frame payloads cannot exceed 125 bytes\n", .{});
+                        break :outer;
+                    }
+                } else {
+                    handler(payload); // user handler for text and binary payloads
+                }
 
                 const mask_key = maskKey();
                 var header: [14]u8 = undefined; // max header size: 2 (min) + 8 (extended payload len) + 4 (mask key)
                 var header_len: usize = 2;
 
-                header[0] = 0x80 | @intFromEnum(op); // fin == 1, opcode == 1 (text)
+                const response_opcode: Opcode = switch (op) {
+                    .text => .text, // echo text
+                    .binary => .binary, // echo binary
+                    .ping => .pong, // respond with pong, echo payload
+                    else => unreachable,
+                };
+
+                header[0] = 0x80 | @intFromEnum(response_opcode);
 
                 switch (payload.len) {
                     0...125 => { // fits in 7-bit length
@@ -190,30 +219,36 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
                 }
 
                 // wstest expects echo
-                std.debug.print("Echoing message back to server\n", .{});
+                std.debug.print("Responding with {s}, echoing payload\n", .{
+                    switch (op) {
+                        .text => "text",
+                        .binary => "binary",
+                        .ping => "pong",
+                        else => unreachable,
+                    },
+                });
                 try writer.writeAll(pld);
             },
             .close => {
                 std.debug.print("Received close frame\n", .{});
                 const close_frame = [_]u8{
                     // byte 0: fin bit == true (one frame) | (rsv not used) | opcode == 8 (close)
-                    0b10000000 | @as(u8, 8),
+                    0b10000000 | @intFromEnum(Opcode.close),
                     // byte 1: mask bit == true (payload is masked) | message length
                     0b10000000 | @as(u8, 0),
-                }
-                    // bytes 2-5: mask key
-                    ++ maskKey();
+                } ++ maskKey(); // bytes 2-5: mask key
 
                 // send frame
                 try writer.writeAll(&close_frame);
 
                 break :outer; // disconnect
             },
-            .ping => std.debug.print("Received ping\n", .{}),
             .pong => std.debug.print("Received pong\n", .{}),
             else => std.debug.print("Unknown opcode: {x}\n", .{@intFromEnum(opcode)}),
         }
     }
+
+    std.debug.print("Closing connection\n", .{});
 }
 
 var case_count: usize = undefined;
@@ -281,7 +316,7 @@ test "autobahn" {
         std.debug.print("Stopped Autobahn fuzzing server container\n", .{});
     }
 
-    std.time.sleep(1_000_000_000); // wait for the server to start
+    std.time.sleep(2 * 1_000_000_000); // wait for the server to start
 
     // CHECK TEST CASE COUNT, RUN ALL TESTS, AND GENERATE REPORT
 
