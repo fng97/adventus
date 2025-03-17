@@ -109,13 +109,32 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
 
         // first byte: check fin and opcode(ignoring rsvx)
         const fin = frame_header[0] & 0b10000000 != 0;
-        try std.testing.expect(fin); // haven't got fragmentation yet
+        const rsv = frame_header[0] & 0b01110000;
         const opcode: Opcode = @enumFromInt(frame_header[0] & 0b00001111);
+
+        if (rsv != 0) {
+            std.debug.print("Reserved bits usage not supported, closing\n", .{});
+            break :outer;
+        }
 
         // second byte: mask bit and payload size
         const is_masked = (frame_header[1] & 0b10000000) != 0;
         try std.testing.expect(!is_masked); // server messages not masked
         const len_byte: u8 = frame_header[1] & 0b01111111;
+
+        switch (opcode) {
+            .close, .ping, .pong => { // control frame checks
+                if (!fin) {
+                    std.debug.print("Control frames cannot be fragmented, closing\n", .{});
+                    break :outer;
+                }
+                if (len_byte > 125) {
+                    std.debug.print("Control frame payloads cannot exceed 125 bytes, closing\n", .{});
+                    break :outer;
+                }
+            },
+            else => {},
+        }
 
         const payload_len = switch (len_byte) { // keep in mind network byte ordering (big endian)
             0...125 => len_byte,
@@ -157,12 +176,7 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
                     },
                 );
 
-                if (op == Opcode.ping) {
-                    if (payload.len > 125) {
-                        std.debug.print("Control frame payloads cannot exceed 125 bytes\n", .{});
-                        break :outer;
-                    }
-                } else {
+                if (op != Opcode.ping) {
                     handler(payload); // user handler for text and binary payloads
                 }
 
@@ -239,6 +253,7 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
                 } ++ maskKey(); // bytes 2-5: mask key
 
                 // send frame
+                std.debug.print("Responding with close frame\n", .{});
                 try writer.writeAll(&close_frame);
 
                 break :outer; // disconnect
