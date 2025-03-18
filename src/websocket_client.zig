@@ -32,13 +32,6 @@ const Opcode = enum(u8) {
     pong = 0xA,
 };
 
-// const FrameHeader = struct {
-//     fin: bool,
-//     opcode: Opcode,
-//     masked: bool,
-//     payload_len: usize,
-// };
-
 fn maskKey() [4]u8 {
     var m: [4]u8 = undefined;
     std.crypto.random.bytes(&m);
@@ -110,7 +103,13 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
         // first byte: check fin and opcode(ignoring rsvx)
         const fin = frame_header[0] & 0b10000000 != 0;
         const rsv = frame_header[0] & 0b01110000;
-        const opcode: Opcode = @enumFromInt(frame_header[0] & 0b00001111);
+        const opcode: Opcode = switch (frame_header[0] & 0b00001111) { // FIXME: nicer way to handle this?
+            0x0, 0x1, 0x2, 0x8, 0x9, 0xA => |o| @enumFromInt(o), // otherwise @enumFromInt for invalid opcode is UB
+            else => |o| {
+                std.debug.print("Unknown opcode: {x}, closing\n", .{o});
+                break :outer;
+            },
+        };
 
         if (rsv != 0) {
             std.debug.print("Reserved bits usage not supported, closing\n", .{});
@@ -259,10 +258,9 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
                 break :outer; // disconnect
             },
             .pong => std.debug.print("Received pong\n", .{}),
-            else => std.debug.print("Unknown opcode: {x}\n", .{@intFromEnum(opcode)}),
+            else => unreachable, // TODO: remove me
         }
     }
-
     std.debug.print("Closing connection\n", .{});
 }
 
