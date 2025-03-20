@@ -23,13 +23,84 @@ const std = @import("std");
 //  |                     Payload Data continued ...                |
 //  +---------------------------------------------------------------+
 
+const Opcode = enum(u8) {
+    continuation = 0x0,
+    text = 0x1,
+    binary = 0x2,
+    close = 0x8,
+    ping = 0x9,
+    pong = 0xA,
+};
+
 fn maskKey() [4]u8 {
     var m: [4]u8 = undefined;
     std.crypto.random.bytes(&m);
     return m;
 }
 
-fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: []const u8) !void {
+/// Write a frame to the server.
+///
+/// NOTE: this overwrites the payload memory. The payload is read and
+/// overwritten with the masked payload one byte at a time.
+///
+/// TODO: check whether we should be copying the writer
+fn writeFrame(writer: anytype, opcode: Opcode, payload: []u8) void {
+    const mask_key = maskKey();
+
+    // max header length is 14: 2 (min) + 8 (extended payload len) + 4 (mask key)
+    var header: [14]u8 = undefined;
+    var header_len: usize = 2;
+
+    // first byte: fin (true) | rsv (none) | opcode
+    header[0] = 0x80 | @intFromEnum(opcode);
+
+    // second byte: mask (true) | payload length
+    header[1] = 0x80; // start by setting mask bet, then or with payload length
+    switch (payload.len) {
+        0...125 => {
+            header[1] |= @as(u8, @intCast(payload.len)); // fits in 7-bit length
+        },
+        126...std.math.maxInt(u16) => {
+            header[1] |= 126; // use 16-bit extended length
+            std.mem.writeInt( // write extended payload length
+                u16,
+                header[2..4],
+                @as(u16, @intCast(payload.len)),
+                .big,
+            );
+            header_len += 2;
+        },
+        (std.math.maxInt(u16) + 1)...std.math.maxInt(u64) => {
+            header[1] |= 127; // use 64-bit extended length
+            std.mem.writeInt( // write extended payload length
+                u64,
+                header[2..10],
+                @as(u64, payload.len),
+                .big,
+            );
+            header_len += 8;
+        },
+    }
+
+    std.mem.copyForwards(u8, header[header_len..], &mask_key);
+    header_len += mask_key.len;
+
+    writer.writeAll(header[0..header_len]) catch @panic("Failed to write header");
+
+    // mask the payload
+    for (payload, 0..) |byte, i| {
+        payload[i] = byte ^ mask_key[i % mask_key.len];
+    }
+
+    writer.writeAll(payload) catch @panic("Failed to write payload");
+}
+
+fn websocket(
+    allocator: std.mem.Allocator,
+    // TODO: structify the client so we can pass self instead of a writer
+    handler: fn (anytype, Opcode, []u8) void,
+    path: []const u8,
+) !void {
     const host = "127.0.0.1";
     const port = 9001;
 
@@ -69,9 +140,9 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
     var response_buffer = std.ArrayList(u8).init(allocator);
     defer response_buffer.deinit();
 
-    const delimiter = "\r\n\r\n"; // (end of HTTP headers)
-
-    while (true) { // read until end of HTTP headers
+    // read until end of HTTP headers
+    const delimiter = "\r\n\r\n";
+    while (true) {
         const byte = try reader.readByte();
         try response_buffer.append(byte);
 
@@ -82,24 +153,49 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
         }
     }
 
-    try std.testing.expect(std.mem.startsWith(u8, response_buffer.items, "HTTP/1.1 101"));
+    try std.testing.expect(std.mem.startsWith(u8, response_buffer.items, "HTTP/1.1 101")); // FIXME: check this first
 
     // START PROCESSING FRAMES
 
-    outer: while (true) { // one frame at a time, refer to frame structure at the top of this file
+    outer: while (true) { // read one frame at a time, refer to frame structure at the top of this file
         std.debug.print("Reading frame\n", .{});
 
         const frame_header = try reader.readBytesNoEof(2);
 
         // first byte: check fin and opcode(ignoring rsvx)
         const fin = frame_header[0] & 0b10000000 != 0;
-        try std.testing.expect(fin); // haven't got fragmentation yet
-        const opcode = frame_header[0] & 0b00001111;
+        const rsv = frame_header[0] & 0b01110000;
+        const opcode: Opcode = switch (frame_header[0] & 0b00001111) { // FIXME: nicer way to handle this?
+            0x0, 0x1, 0x2, 0x8, 0x9, 0xA => |o| @enumFromInt(o), // otherwise @enumFromInt for invalid opcode is UB
+            else => |o| {
+                std.debug.print("Unknown opcode: {x}, closing\n", .{o});
+                break :outer;
+            },
+        };
 
-        // second byte: mask bit and payload size
+        if (rsv != 0) {
+            std.debug.print("Reserved bits usage not supported, closing\n", .{});
+            break :outer;
+        }
+
+        // second byte: mask bit and payload length
         const is_masked = (frame_header[1] & 0b10000000) != 0;
         try std.testing.expect(!is_masked); // server messages not masked
         const len_byte: u8 = frame_header[1] & 0b01111111;
+
+        switch (opcode) {
+            .close, .ping, .pong => { // control frame checks
+                if (!fin) {
+                    std.debug.print("Control frames cannot be fragmented, closing\n", .{});
+                    break :outer;
+                }
+                if (len_byte > 125) {
+                    std.debug.print("Control frame payloads cannot exceed 125 bytes, closing\n", .{});
+                    break :outer;
+                }
+            },
+            else => {},
+        }
 
         const payload_len = switch (len_byte) { // keep in mind network byte ordering (big endian)
             0...125 => len_byte,
@@ -127,89 +223,45 @@ fn websocket(allocator: std.mem.Allocator, handler: fn ([]const u8) void, path: 
         try reader.readNoEof(payload);
 
         switch (opcode) {
-            0x1, 0x2 => |op| {
-                std.debug.print(
-                    "Received {d} bytes of {s}\n",
-                    .{ payload.len, if (op == 0x1) "text" else "binary" },
-                );
-
-                handler(payload);
-
-                const mask_key = maskKey();
-                var header: [14]u8 = undefined; // max header size: 2 (min) + 8 (extended payload len) + 4 (mask key)
-                var header_len: usize = 2;
-
-                header[0] = 0x80 | op; // fin == 1, opcode == 1 (text)
-
-                switch (payload.len) {
-                    0...125 => { // fits in 7-bit length
-                        header[1] = 0x80 | @as(u8, @intCast(payload.len));
+            .text, .binary => |op| {
+                std.debug.print("Received {s} frame with a {d}-byte payload\n", .{
+                    switch (op) {
+                        .text => "text",
+                        .binary => "binary",
+                        else => unreachable,
                     },
-                    126...std.math.maxInt(u16) => { // use 16-bit extended length
-                        header[1] = 0x80 | 126;
-                        std.mem.writeInt(
-                            u16,
-                            header[2..4],
-                            @as(u16, @intCast(payload.len)),
-                            .big,
-                        );
-                        header_len += 2;
-                    },
-                    (std.math.maxInt(u16) + 1)...std.math.maxInt(u64) => { // use 64-bit extended length
-                        header[1] = 0x80 | 127;
-                        std.mem.writeInt(
-                            u64,
-                            header[2..10],
-                            @as(u64, payload.len),
-                            .big,
-                        );
-                        header_len += 8;
-                    },
-                }
-
-                std.mem.copyForwards(u8, header[header_len..][0..4], &mask_key);
-                header_len += 4;
-
-                // send header
-                try writer.writeAll(header[0..header_len]);
-
-                var pld = try allocator.alloc(u8, payload_len);
-                defer allocator.free(pld);
-
-                for (payload, 0..) |byte, i| {
-                    pld[i] = byte ^ mask_key[i % 4];
-                }
-
-                // wstest expects echo
-                std.debug.print("Echoing message back to server\n", .{});
-                try writer.writeAll(pld);
+                    payload.len,
+                });
+                handler(writer, opcode, payload);
             },
-            0x8 => {
-                std.debug.print("Received close frame\n", .{});
-                const close_frame = [_]u8{
-                    // byte 0: fin bit == true (one frame) | (rsv not used) | opcode == 8 (close)
-                    0b10000000 | @as(u8, 8),
-                    // byte 1: mask bit == true (payload is masked) | message length
-                    0b10000000 | @as(u8, 0),
-                }
-                    // bytes 2-5: mask key
-                    ++ maskKey();
-
-                // send frame
-                try writer.writeAll(&close_frame);
-
+            .continuation => {
+                std.debug.print("Received continuation frame\n", .{});
+            },
+            .close => {
+                std.debug.print(
+                    "Received close frame\nResponding with close frame before closing\n",
+                    .{},
+                );
+                const empty: []u8 = ""; // FIXME: use optional parameter instead
+                writeFrame(writer, Opcode.close, empty);
                 break :outer; // disconnect
             },
-            0x9 => std.debug.print("Received ping\n", .{}),
-            0xA => std.debug.print("Received pong\n", .{}),
-            else => std.debug.print("Unknown opcode: {x}\n", .{opcode}),
+            .ping => { // respond with pong, echoing payload
+                std.debug.print(
+                    "Received ping frame with a {d}-byte payload\nResponding with pong\n",
+                    .{payload.len},
+                );
+                writeFrame(writer, Opcode.pong, payload);
+            },
+            .pong => std.debug.print("Received pong\n", .{}),
         }
     }
+    std.debug.print("Closing connection\n", .{});
 }
 
 var case_count: usize = undefined;
 
-fn setCaseCount(payload: []const u8) void {
+fn setCaseCount(_: anytype, _: Opcode, payload: []u8) void {
     std.debug.print("Case count: {s}\n", .{payload});
     case_count = std.fmt.parseInt(
         u16,
@@ -218,7 +270,12 @@ fn setCaseCount(payload: []const u8) void {
     ) catch @panic("Failed to parse case count");
 }
 
-fn nop(_: []const u8) void {}
+fn nop(_: anytype, _: Opcode, _: []u8) void {}
+
+fn echo(writer: anytype, opcode: Opcode, payload: []u8) void {
+    std.debug.print("Responding with echo\n", .{});
+    writeFrame(writer, opcode, payload);
+}
 
 test "autobahn" {
     const allocator = std.testing.allocator;
@@ -272,7 +329,7 @@ test "autobahn" {
         std.debug.print("Stopped Autobahn fuzzing server container\n", .{});
     }
 
-    std.time.sleep(1_000_000_000); // wait for the server to start
+    std.time.sleep(2 * 1_000_000_000); // wait for the server to start
 
     // CHECK TEST CASE COUNT, RUN ALL TESTS, AND GENERATE REPORT
 
@@ -298,7 +355,8 @@ test "autobahn" {
         );
         defer allocator.free(path);
 
-        try websocket(allocator, nop, path);
+        try websocket(allocator, echo, path); // wstest expects all messages to be echoed
+
     }
 
     // TODO: CHECK RESULTS BY COMPARING TO EXPECTED INDEX.JSON
