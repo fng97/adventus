@@ -23,11 +23,6 @@ const std = @import("std");
 //  |                     Payload Data continued ...                |
 //  +---------------------------------------------------------------+
 
-// TODO:
-//
-// - separate into connect and read functions
-// - move while loop out of read: read returns Message and is called in loop
-
 /// This type is used by the application to handle messages. A Message
 /// encapsulates the data received in text and binary frames (or text/binary
 /// re-assembled from fragmented frames).
@@ -38,7 +33,7 @@ const Message = struct {
     };
 
     type: Type,
-    data: []const u8,
+    data: []u8,
 };
 
 const Opcode = enum(u8) {
@@ -54,63 +49,6 @@ fn maskKey() [4]u8 {
     var m: [4]u8 = undefined;
     std.crypto.random.bytes(&m);
     return m;
-}
-
-/// Write a frame to the server.
-///
-/// NOTE: this overwrites the payload memory. The payload is read and
-/// overwritten with the masked payload one byte at a time.
-///
-/// TODO: check whether we should be copying the writer
-fn writeFrame(writer: anytype, opcode: Opcode, payload: []u8) void {
-    const mask_key = maskKey();
-
-    // max header length is 14: 2 (min) + 8 (extended payload len) + 4 (mask key)
-    var header: [14]u8 = undefined;
-    var header_len: usize = 2;
-
-    // first byte: fin (true) | rsv (none) | opcode
-    header[0] = 0x80 | @intFromEnum(opcode);
-
-    // second byte: mask (true) | payload length
-    header[1] = 0x80; // start by setting mask bet, then or with payload length
-    switch (payload.len) {
-        0...125 => {
-            header[1] |= @as(u8, @intCast(payload.len)); // fits in 7-bit length
-        },
-        126...std.math.maxInt(u16) => {
-            header[1] |= 126; // use 16-bit extended length
-            std.mem.writeInt( // write extended payload length
-                u16,
-                header[2..4],
-                @as(u16, @intCast(payload.len)),
-                .big,
-            );
-            header_len += 2;
-        },
-        (std.math.maxInt(u16) + 1)...std.math.maxInt(u64) => {
-            header[1] |= 127; // use 64-bit extended length
-            std.mem.writeInt( // write extended payload length
-                u64,
-                header[2..10],
-                @as(u64, payload.len),
-                .big,
-            );
-            header_len += 8;
-        },
-    }
-
-    std.mem.copyForwards(u8, header[header_len..], &mask_key);
-    header_len += mask_key.len;
-
-    writer.writeAll(header[0..header_len]) catch @panic("Failed to write header");
-
-    // mask the payload
-    for (payload, 0..) |byte, i| {
-        payload[i] = byte ^ mask_key[i % mask_key.len];
-    }
-
-    writer.writeAll(payload) catch @panic("Failed to write payload");
 }
 
 const Client = struct {
@@ -185,10 +123,8 @@ const Client = struct {
     fn read(
         self: *const Client,
         buffer: []u8,
-        handler: fn (anytype, Opcode, []u8) void,
-    ) !void {
+    ) !?Message {
         const reader = self.stream.reader();
-        const writer = self.stream.writer();
 
         // START PROCESSING FRAMES
 
@@ -266,7 +202,15 @@ const Client = struct {
                         },
                         payload.len,
                     });
-                    handler(writer, opcode, payload);
+
+                    return Message{
+                        .type = switch (op) { // convert Opcode to Message.Type
+                            .text => .text,
+                            .binary => .binary,
+                            else => unreachable,
+                        },
+                        .data = payload,
+                    };
                 },
                 .continuation => {
                     std.debug.print("Received continuation frame\n", .{});
@@ -277,7 +221,7 @@ const Client = struct {
                         .{},
                     );
                     const empty: []u8 = ""; // FIXME: use optional parameter instead
-                    writeFrame(writer, Opcode.close, empty);
+                    self.writeFrame(Opcode.close, empty);
                     break :outer; // disconnect
                 },
                 .ping => { // respond with pong, echoing payload
@@ -285,36 +229,76 @@ const Client = struct {
                         "Received ping frame with a {d}-byte payload\nResponding with pong\n",
                         .{payload.len},
                     );
-                    writeFrame(writer, Opcode.pong, payload);
+                    self.writeFrame(Opcode.pong, payload);
                 },
                 .pong => std.debug.print("Received pong\n", .{}),
             }
         }
         std.debug.print("Closing connection\n", .{});
+        return null;
+    }
+
+    /// Write a frame to the server.
+    ///
+    /// NOTE: this overwrites the payload memory. The payload is read and
+    /// overwritten with the masked payload one byte at a time.
+    fn writeFrame(self: *const Client, opcode: Opcode, payload: []u8) void {
+        const writer = self.stream.writer();
+
+        const mask_key = maskKey();
+
+        // max header length is 14: 2 (min) + 8 (extended payload len) + 4 (mask key)
+        var header: [14]u8 = undefined;
+        var header_len: usize = 2;
+
+        // first byte: fin (true) | rsv (none) | opcode
+        header[0] = 0x80 | @intFromEnum(opcode);
+
+        // second byte: mask (true) | payload length
+        header[1] = 0x80; // start by setting mask bet, then or with payload length
+        switch (payload.len) {
+            0...125 => {
+                header[1] |= @as(u8, @intCast(payload.len)); // fits in 7-bit length
+            },
+            126...std.math.maxInt(u16) => {
+                header[1] |= 126; // use 16-bit extended length
+                std.mem.writeInt( // write extended payload length
+                    u16,
+                    header[2..4],
+                    @as(u16, @intCast(payload.len)),
+                    .big,
+                );
+                header_len += 2;
+            },
+            (std.math.maxInt(u16) + 1)...std.math.maxInt(u64) => {
+                header[1] |= 127; // use 64-bit extended length
+                std.mem.writeInt( // write extended payload length
+                    u64,
+                    header[2..10],
+                    @as(u64, payload.len),
+                    .big,
+                );
+                header_len += 8;
+            },
+        }
+
+        std.mem.copyForwards(u8, header[header_len..], &mask_key);
+        header_len += mask_key.len;
+
+        writer.writeAll(header[0..header_len]) catch @panic("Failed to write header");
+
+        // mask the payload
+        for (payload, 0..) |byte, i| {
+            payload[i] = byte ^ mask_key[i % mask_key.len];
+        }
+
+        writer.writeAll(payload) catch @panic("Failed to write payload");
     }
 
     fn deinit(self: *const Client) void {
         self.stream.close();
     }
 };
-
-var case_count: usize = undefined;
-
-fn setCaseCount(_: anytype, _: Opcode, payload: []u8) void {
-    std.debug.print("Case count: {s}\n", .{payload});
-    case_count = std.fmt.parseInt(
-        u16,
-        payload,
-        10,
-    ) catch @panic("Failed to parse case count");
-}
-
-fn nop(_: anytype, _: Opcode, _: []u8) void {}
-
-fn echo(writer: anytype, opcode: Opcode, payload: []u8) void {
-    std.debug.print("Responding with echo\n", .{});
-    writeFrame(writer, opcode, payload);
-}
 
 test "autobahn" {
     const allocator = std.testing.allocator;
@@ -375,26 +359,33 @@ test "autobahn" {
     const buffer = try allocator.alloc(u8, 16 * 1024 * 1024); // max wstest payload is 16M
     defer allocator.free(buffer);
 
-    { // so we're not shadowing 'client'
+    const case_count: usize = blk: {
         std.debug.print("\nGETTING CASE COUNT\n\n", .{});
+
         const client = try Client.Connect(allocator, "/getCaseCount");
         defer client.deinit();
-        try client.read(buffer, setCaseCount);
-    }
+
+        while (try client.read(buffer)) |message| { // only expecting one message
+            try std.testing.expect(message.type == .text);
+            std.debug.print("Case count: {s}\n", .{message.data});
+            break :blk try std.fmt.parseInt(u16, message.data, 10);
+        }
+
+        @panic("Failed to retrieve case count from wstest");
+    };
 
     defer {
         std.debug.print("\nGENERATING RESULTS REPORT\n\n", .{});
+
         const client = Client.Connect(
             allocator,
             "/updateReports?agent=Adventus",
-        ) catch @panic("Failed connecting while trying to generate results report");
-
+        ) catch @panic("Failed to connect client");
         defer client.deinit();
 
-        client.read(
+        while (client.read(
             buffer,
-            nop,
-        ) catch @panic("Failed to generate wstest report\n");
+        ) catch @panic("Failed to read a message\n")) |_| {}
     }
 
     for (1..case_count + 1) |case| {
@@ -409,7 +400,16 @@ test "autobahn" {
 
         const client = try Client.Connect(allocator, path);
         defer client.deinit();
-        try client.read(buffer, echo); // wstest expects all messages to be echoed
+
+        while (try client.read(buffer)) |message| {
+            // wstest expects all messages to be echoed
+            std.debug.print("Responding with echo\n", .{});
+            // TODO: add sendMessage wrapper of writeFrame for application use
+            client.writeFrame(switch (message.type) {
+                .text => Opcode.text,
+                .binary => Opcode.binary,
+            }, message.data);
+        }
     }
 
     // TODO: CHECK RESULTS BY COMPARING TO EXPECTED INDEX.JSON
