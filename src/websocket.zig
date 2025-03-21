@@ -23,6 +23,24 @@ const std = @import("std");
 //  |                     Payload Data continued ...                |
 //  +---------------------------------------------------------------+
 
+// TODO:
+//
+// - separate into connect and read functions
+// - move while loop out of read: read returns Message and is called in loop
+
+/// This type is used by the application to handle messages. A Message
+/// encapsulates the data received in text and binary frames (or text/binary
+/// re-assembled from fragmented frames).
+const Message = struct {
+    const Type = enum {
+        text,
+        binary,
+    };
+
+    type: Type,
+    data: []const u8,
+};
+
 const Opcode = enum(u8) {
     continuation = 0x0,
     text = 0x1,
@@ -95,171 +113,190 @@ fn writeFrame(writer: anytype, opcode: Opcode, payload: []u8) void {
     writer.writeAll(payload) catch @panic("Failed to write payload");
 }
 
-fn websocket(
+const Client = struct {
     allocator: std.mem.Allocator,
-    buffer: []u8,
-    // TODO: structify the client so we can pass self instead of a writer
-    handler: fn (anytype, Opcode, []u8) void,
-    path: []const u8,
-) !void {
-    const host = "127.0.0.1";
-    const port = 9001;
+    stream: std.net.Stream,
 
-    // CONNECT SOCKET
+    fn Connect(
+        allocator: std.mem.Allocator,
+        path: []const u8,
+    ) !Client {
+        const host = "127.0.0.1";
+        const port = 9001;
 
-    const address = try std.net.Address.parseIp(host, port);
-    std.debug.print("Connecting WebSocket client\n", .{});
-    const stream = try std.net.tcpConnectToAddress(address);
-    defer stream.close();
+        // CONNECT SOCKET
 
-    const reader = stream.reader();
-    const writer = stream.writer();
+        const address = try std.net.Address.parseIp(host, port);
+        std.debug.print("Connecting WebSocket client\n", .{});
+        const stream = try std.net.tcpConnectToAddress(address);
 
-    // UPGRADE TO WEBSOCKET CONNECTION
+        const reader = stream.reader();
+        const writer = stream.writer();
 
-    // generate random WebSocket key
-    var ws_key: [24]u8 = undefined;
-    var random_bytes: [16]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
-    _ = std.base64.standard.Encoder.encode(&ws_key, &random_bytes);
+        // UPGRADE TO WEBSOCKET CONNECTION
 
-    // TODO: replace with bufprint so we can remove allocator arg
-    const upgrade_request = try std.fmt.allocPrint(allocator, "GET {s} HTTP/1.1\r\n" ++
-        "Host: {s}:{d}\r\n" ++
-        "Upgrade: websocket\r\n" ++
-        "Connection: Upgrade\r\n" ++
-        "Sec-WebSocket-Key: {s}\r\n" ++
-        "Sec-WebSocket-Version: 13\r\n" ++
-        "\r\n", .{ path, host, port, ws_key });
-    defer allocator.free(upgrade_request);
+        // generate random WebSocket key
+        var ws_key: [24]u8 = undefined;
+        var random_bytes: [16]u8 = undefined;
+        std.crypto.random.bytes(&random_bytes);
+        _ = std.base64.standard.Encoder.encode(&ws_key, &random_bytes);
 
-    // send the upgrade request
-    std.debug.print("Sending upgrade request\n", .{});
-    try writer.writeAll(upgrade_request);
+        // TODO: replace with bufprint so we can remove allocator arg
+        const upgrade_request = try std.fmt.allocPrint(allocator, "GET {s} HTTP/1.1\r\n" ++
+            "Host: {s}:{d}\r\n" ++
+            "Upgrade: websocket\r\n" ++
+            "Connection: Upgrade\r\n" ++
+            "Sec-WebSocket-Key: {s}\r\n" ++
+            "Sec-WebSocket-Version: 13\r\n" ++
+            "\r\n", .{ path, host, port, ws_key });
+        defer allocator.free(upgrade_request);
 
-    // VERIFY WE GOT A SUCCESSFUL UPGRADE RESPONSE
+        // send the upgrade request
+        std.debug.print("Sending upgrade request\n", .{});
+        try writer.writeAll(upgrade_request);
 
-    var response_buffer = std.ArrayList(u8).init(allocator);
-    defer response_buffer.deinit();
+        // VERIFY WE GOT A SUCCESSFUL UPGRADE RESPONSE
 
-    // TODO: read into buffer instead so we can remove allocator arg
-    // read until end of HTTP headers
-    const delimiter = "\r\n\r\n";
-    while (true) {
-        const byte = try reader.readByte();
-        try response_buffer.append(byte);
+        var response_buffer = std.ArrayList(u8).init(allocator);
+        defer response_buffer.deinit();
 
-        // check last four bytes for delimiter
-        if (response_buffer.items.len >= delimiter.len) {
-            const tail = response_buffer.items[(response_buffer.items.len - delimiter.len)..];
-            if (std.mem.eql(u8, tail, delimiter)) break;
+        // TODO: read into buffer instead so we can remove allocator arg
+        // read until end of HTTP headers
+        const delimiter = "\r\n\r\n";
+        while (true) {
+            const byte = try reader.readByte();
+            try response_buffer.append(byte);
+
+            // check last four bytes for delimiter
+            if (response_buffer.items.len >= delimiter.len) {
+                const tail = response_buffer.items[(response_buffer.items.len - delimiter.len)..];
+                if (std.mem.eql(u8, tail, delimiter)) break;
+            }
         }
+
+        try std.testing.expect(std.mem.startsWith(u8, response_buffer.items, "HTTP/1.1 101")); // FIXME: check this first
+
+        return Client{
+            .allocator = allocator,
+            .stream = stream,
+        };
     }
 
-    try std.testing.expect(std.mem.startsWith(u8, response_buffer.items, "HTTP/1.1 101")); // FIXME: check this first
+    fn read(
+        self: *const Client,
+        buffer: []u8,
+        handler: fn (anytype, Opcode, []u8) void,
+    ) !void {
+        const reader = self.stream.reader();
+        const writer = self.stream.writer();
 
-    // START PROCESSING FRAMES
+        // START PROCESSING FRAMES
 
-    outer: while (true) { // read one frame at a time, refer to frame structure at the top of this file
-        std.debug.print("Reading frame\n", .{});
+        outer: while (true) { // read one frame at a time, refer to frame structure at the top of this file
+            std.debug.print("Reading frame\n", .{});
 
-        const frame_header = try reader.readBytesNoEof(2);
+            const frame_header = try reader.readBytesNoEof(2);
 
-        // first byte: check fin and opcode(ignoring rsvx)
-        const fin = frame_header[0] & 0b10000000 != 0;
-        const rsv = frame_header[0] & 0b01110000;
-        const opcode: Opcode = switch (frame_header[0] & 0b00001111) { // FIXME: nicer way to handle this?
-            0x0, 0x1, 0x2, 0x8, 0x9, 0xA => |o| @enumFromInt(o), // otherwise @enumFromInt for invalid opcode is UB
-            else => |o| {
-                std.debug.print("Unknown opcode: {x}, closing\n", .{o});
+            // first byte: check fin and opcode(ignoring rsvx)
+            const fin = frame_header[0] & 0b10000000 != 0;
+            const rsv = frame_header[0] & 0b01110000;
+            const opcode: Opcode = switch (frame_header[0] & 0b00001111) { // FIXME: nicer way to handle this?
+                0x0, 0x1, 0x2, 0x8, 0x9, 0xA => |o| @enumFromInt(o), // otherwise @enumFromInt for invalid opcode is UB
+                else => |o| {
+                    std.debug.print("Unknown opcode: {x}, closing\n", .{o});
+                    break :outer;
+                },
+            };
+
+            if (rsv != 0) {
+                std.debug.print("Reserved bits usage not supported, closing\n", .{});
                 break :outer;
-            },
-        };
+            }
 
-        if (rsv != 0) {
-            std.debug.print("Reserved bits usage not supported, closing\n", .{});
-            break :outer;
+            // second byte: mask bit and payload length
+            const is_masked = (frame_header[1] & 0b10000000) != 0;
+            try std.testing.expect(!is_masked); // server messages not masked
+            const len_byte: u8 = frame_header[1] & 0b01111111;
+
+            switch (opcode) {
+                .close, .ping, .pong => { // control frame checks
+                    if (!fin) {
+                        std.debug.print("Control frames cannot be fragmented, closing\n", .{});
+                        break :outer;
+                    }
+                    if (len_byte > 125) {
+                        std.debug.print("Control frame payloads cannot exceed 125 bytes, closing\n", .{});
+                        break :outer;
+                    }
+                },
+                else => {},
+            }
+
+            const payload_len = switch (len_byte) { // keep in mind network byte ordering (big endian)
+                0...125 => len_byte,
+                126 => blk: {
+                    const len_bytes = try reader.readBytesNoEof(2);
+                    break :blk std.mem.bigToNative(
+                        u16,
+                        std.mem.bytesToValue(u16, &len_bytes),
+                    );
+                },
+                127 => blk: {
+                    const len_bytes = try reader.readBytesNoEof(8);
+                    break :blk std.mem.bigToNative(
+                        u64,
+                        std.mem.bytesToValue(u64, &len_bytes),
+                    );
+                },
+                else => unreachable,
+            };
+
+            // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
+            const payload = buffer[0..payload_len];
+
+            try reader.readNoEof(payload);
+
+            switch (opcode) {
+                .text, .binary => |op| {
+                    std.debug.print("Received {s} frame with a {d}-byte payload\n", .{
+                        switch (op) {
+                            .text => "text",
+                            .binary => "binary",
+                            else => unreachable,
+                        },
+                        payload.len,
+                    });
+                    handler(writer, opcode, payload);
+                },
+                .continuation => {
+                    std.debug.print("Received continuation frame\n", .{});
+                },
+                .close => {
+                    std.debug.print(
+                        "Received close frame\nResponding with close frame before closing\n",
+                        .{},
+                    );
+                    const empty: []u8 = ""; // FIXME: use optional parameter instead
+                    writeFrame(writer, Opcode.close, empty);
+                    break :outer; // disconnect
+                },
+                .ping => { // respond with pong, echoing payload
+                    std.debug.print(
+                        "Received ping frame with a {d}-byte payload\nResponding with pong\n",
+                        .{payload.len},
+                    );
+                    writeFrame(writer, Opcode.pong, payload);
+                },
+                .pong => std.debug.print("Received pong\n", .{}),
+            }
         }
-
-        // second byte: mask bit and payload length
-        const is_masked = (frame_header[1] & 0b10000000) != 0;
-        try std.testing.expect(!is_masked); // server messages not masked
-        const len_byte: u8 = frame_header[1] & 0b01111111;
-
-        switch (opcode) {
-            .close, .ping, .pong => { // control frame checks
-                if (!fin) {
-                    std.debug.print("Control frames cannot be fragmented, closing\n", .{});
-                    break :outer;
-                }
-                if (len_byte > 125) {
-                    std.debug.print("Control frame payloads cannot exceed 125 bytes, closing\n", .{});
-                    break :outer;
-                }
-            },
-            else => {},
-        }
-
-        const payload_len = switch (len_byte) { // keep in mind network byte ordering (big endian)
-            0...125 => len_byte,
-            126 => blk: {
-                const len_bytes = try reader.readBytesNoEof(2);
-                break :blk std.mem.bigToNative(
-                    u16,
-                    std.mem.bytesToValue(u16, &len_bytes),
-                );
-            },
-            127 => blk: {
-                const len_bytes = try reader.readBytesNoEof(8);
-                break :blk std.mem.bigToNative(
-                    u64,
-                    std.mem.bytesToValue(u64, &len_bytes),
-                );
-            },
-            else => unreachable,
-        };
-
-        // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
-        const payload = buffer[0..payload_len];
-
-        try reader.readNoEof(payload);
-
-        switch (opcode) {
-            .text, .binary => |op| {
-                std.debug.print("Received {s} frame with a {d}-byte payload\n", .{
-                    switch (op) {
-                        .text => "text",
-                        .binary => "binary",
-                        else => unreachable,
-                    },
-                    payload.len,
-                });
-                handler(writer, opcode, payload);
-            },
-            .continuation => {
-                std.debug.print("Received continuation frame\n", .{});
-            },
-            .close => {
-                std.debug.print(
-                    "Received close frame\nResponding with close frame before closing\n",
-                    .{},
-                );
-                const empty: []u8 = ""; // FIXME: use optional parameter instead
-                writeFrame(writer, Opcode.close, empty);
-                break :outer; // disconnect
-            },
-            .ping => { // respond with pong, echoing payload
-                std.debug.print(
-                    "Received ping frame with a {d}-byte payload\nResponding with pong\n",
-                    .{payload.len},
-                );
-                writeFrame(writer, Opcode.pong, payload);
-            },
-            .pong => std.debug.print("Received pong\n", .{}),
-        }
+        std.debug.print("Closing connection\n", .{});
     }
-    std.debug.print("Closing connection\n", .{});
-}
+
+    fn deinit(self: *const Client) void {
+        self.stream.close();
+    }
+};
 
 var case_count: usize = undefined;
 
@@ -338,16 +375,25 @@ test "autobahn" {
     const buffer = try allocator.alloc(u8, 16 * 1024 * 1024); // max wstest payload is 16M
     defer allocator.free(buffer);
 
-    std.debug.print("\nGETTING CASE COUNT\n\n", .{});
-    try websocket(allocator, buffer, setCaseCount, "/getCaseCount");
+    { // so we're not shadowing 'client'
+        std.debug.print("\nGETTING CASE COUNT\n\n", .{});
+        const client = try Client.Connect(allocator, "/getCaseCount");
+        defer client.deinit();
+        try client.read(buffer, setCaseCount);
+    }
 
     defer {
         std.debug.print("\nGENERATING RESULTS REPORT\n\n", .{});
-        websocket(
+        const client = Client.Connect(
             allocator,
+            "/updateReports?agent=Adventus",
+        ) catch @panic("Failed connecting while trying to generate results report");
+
+        defer client.deinit();
+
+        client.read(
             buffer,
             nop,
-            "/updateReports?agent=Adventus",
         ) catch @panic("Failed to generate wstest report\n");
     }
 
@@ -361,8 +407,9 @@ test "autobahn" {
         );
         defer allocator.free(path);
 
-        try websocket(allocator, buffer, echo, path); // wstest expects all messages to be echoed
-
+        const client = try Client.Connect(allocator, path);
+        defer client.deinit();
+        try client.read(buffer, echo); // wstest expects all messages to be echoed
     }
 
     // TODO: CHECK RESULTS BY COMPARING TO EXPECTED INDEX.JSON
