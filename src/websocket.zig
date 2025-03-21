@@ -97,6 +97,7 @@ fn writeFrame(writer: anytype, opcode: Opcode, payload: []u8) void {
 
 fn websocket(
     allocator: std.mem.Allocator,
+    buffer: []u8,
     // TODO: structify the client so we can pass self instead of a writer
     handler: fn (anytype, Opcode, []u8) void,
     path: []const u8,
@@ -122,6 +123,7 @@ fn websocket(
     std.crypto.random.bytes(&random_bytes);
     _ = std.base64.standard.Encoder.encode(&ws_key, &random_bytes);
 
+    // TODO: replace with bufprint so we can remove allocator arg
     const upgrade_request = try std.fmt.allocPrint(allocator, "GET {s} HTTP/1.1\r\n" ++
         "Host: {s}:{d}\r\n" ++
         "Upgrade: websocket\r\n" ++
@@ -140,6 +142,7 @@ fn websocket(
     var response_buffer = std.ArrayList(u8).init(allocator);
     defer response_buffer.deinit();
 
+    // TODO: read into buffer instead so we can remove allocator arg
     // read until end of HTTP headers
     const delimiter = "\r\n\r\n";
     while (true) {
@@ -217,8 +220,7 @@ fn websocket(
         };
 
         // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
-        const payload = try allocator.alloc(u8, payload_len);
-        defer allocator.free(payload);
+        const payload = buffer[0..payload_len];
 
         try reader.readNoEof(payload);
 
@@ -333,13 +335,17 @@ test "autobahn" {
 
     // CHECK TEST CASE COUNT, RUN ALL TESTS, AND GENERATE REPORT
 
+    const buffer = try allocator.alloc(u8, 16 * 1024 * 1024); // max wstest payload is 16M
+    defer allocator.free(buffer);
+
     std.debug.print("\nGETTING CASE COUNT\n\n", .{});
-    try websocket(allocator, setCaseCount, "/getCaseCount");
+    try websocket(allocator, buffer, setCaseCount, "/getCaseCount");
 
     defer {
         std.debug.print("\nGENERATING RESULTS REPORT\n\n", .{});
         websocket(
             allocator,
+            buffer,
             nop,
             "/updateReports?agent=Adventus",
         ) catch @panic("Failed to generate wstest report\n");
@@ -355,7 +361,7 @@ test "autobahn" {
         );
         defer allocator.free(path);
 
-        try websocket(allocator, echo, path); // wstest expects all messages to be echoed
+        try websocket(allocator, buffer, echo, path); // wstest expects all messages to be echoed
 
     }
 
