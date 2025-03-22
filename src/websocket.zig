@@ -119,20 +119,62 @@ const Client = struct {
         return error.InvalidUpgradeResponse;
     }
 
+    /// The state of a fragmented message. An instance of this struct is used
+    /// to keep track of the message type given in the initial fragment and the
+    /// total message size which is incremented as further fragments are
+    /// received.
+    const FragmentedMessageState = struct {
+        size: usize = 0,
+        type: Message.Type,
+    };
+
     /// Read frames until a full message has been read then yield to
     /// application. This function must be called in a loop to ensure we're
     /// responding to pings with pongs.
+    ///
+    /// This handles message fragmentation. Here are some excerpts from section
+    /// 5.4 of the RFC:
+    ///
+    /// > A fragmented message consists of a single frame with the FIN bit
+    /// > clear and an opcode other than 0, followed by zero or more frames
+    /// > with the FIN bit clear and the opcode set to 0, and terminated by
+    /// > a single frame with the FIN bit set and an opcode of 0.
+    ///
+    /// > EXAMPLE: For a text message sent as three fragments, the first
+    /// > fragment would have an opcode of 0x1 and a FIN bit clear, the
+    /// > second fragment would have an opcode of 0x0 and a FIN bit clear,
+    /// > and the third fragment would have an opcode of 0x0 and a FIN bit
+    /// > that is set.
+    ///
+    /// > Control frames (see Section 5.5) MAY be injected in the middle of
+    /// > a fragmented message.  Control frames themselves MUST NOT be
+    /// > fragmented.
     fn read(
         self: *const Client,
         buffer: []u8,
     ) !?Message {
         const reader = self.stream.reader();
 
-        outer: while (true) { // read one frame at a time
-            // refer to frame structure at the top of this file
+        // This slice represents the available portion of the buffer where new
+        // message fragments can be written. As we receive and store fragments,
+        // we adjust this slice to start immediately after the last written
+        // fragment, effectively shrinking it to track the remaining free space.
+        // However, this slice remains unchanged when handling control frames
+        // like pings, since they do not contribute to the message assembly.
+        // The slice does not need to be reset when yielding a complete message
+        // (either unfragmented or fully assembled), as the function returns
+        // to the caller and this variable goes out of scope.
+        var buffer_tail: []u8 = buffer;
+        var msg_state: ?FragmentedMessageState = null;
 
+        // START READING, ONE FRAME AT A TIME
+
+        outer: while (true) {
             std.debug.print("Reading frame\n", .{});
 
+            // READ HEADER
+
+            // refer to frame structure at the top of this file
             const frame_header = try reader.readBytesNoEof(2);
 
             // first byte: check fin and opcode (ignoring rsv)
@@ -170,6 +212,8 @@ const Client = struct {
                 else => {},
             }
 
+            // IF INDICATED, READ EXTENDED PAYLOAD SIZE
+
             const payload_len = switch (len_byte) { // keep in mind network byte ordering (big endian)
                 0...125 => len_byte,
                 126 => blk: {
@@ -189,55 +233,81 @@ const Client = struct {
                 else => unreachable,
             };
 
-            if (payload_len > buffer.len) return error.BufferTooSmallForPayload;
+            // READ AND HANDLE PAYLOAD
 
             // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
-            const payload = buffer[0..payload_len];
-
+            if (payload_len > buffer_tail.len) return error.BufferTooSmallForPayload;
+            const payload = buffer_tail[0..payload_len];
             try reader.readNoEof(payload);
+
+            std.debug.print("Received {s} frame with a {d}-byte payload\n", .{
+                switch (opcode) {
+                    .text => "text",
+                    .binary => "binary",
+                    .continuation => "continuation",
+                    .ping => "ping",
+                    .pong => "pong",
+                    .close => "close",
+                },
+                payload.len,
+            });
 
             switch (opcode) {
                 .text, .binary => |op| {
-                    std.debug.print("Received {s} frame with a {d}-byte payload\n", .{
-                        switch (op) {
-                            .text => "text",
-                            .binary => "binary",
-                            else => unreachable,
-                        },
-                        payload.len,
-                    });
+                    if (msg_state) |_| {
+                        std.debug.print(
+                            "Received non-continuation frame after initial fragment",
+                            .{},
+                        );
+                        break :outer; // disconnect
+                    }
 
-                    return Message{
-                        .type = switch (op) { // convert Opcode to Message.Type
-                            .text => .text,
-                            .binary => .binary,
-                            else => unreachable,
-                        },
-                        .data = payload,
+                    const msg_type: Message.Type = switch (op) {
+                        .text => .text,
+                        .binary => .binary,
+                        else => unreachable,
                     };
+
+                    if (fin) { // received unfragmented message
+                        return Message{
+                            .type = msg_type,
+                            .data = payload,
+                        };
+                    } // else received initial fragment: keep reading
+                    msg_state = FragmentedMessageState{
+                        .size = payload_len,
+                        .type = msg_type,
+                    };
+                    buffer_tail = buffer_tail[payload_len..];
                 },
-                .continuation => {
-                    std.debug.print("Received continuation frame\n", .{});
+                .continuation => { // received fragment
+                    if (msg_state == null) {
+                        std.debug.print(
+                            "Received continuation fragment without intial fraagment\n",
+                            .{},
+                        );
+                        break :outer; // disconnect
+                    }
+
+                    msg_state.?.size += payload_len;
+
+                    if (fin) return Message{ // final fragment: assemble message
+                        .type = msg_state.?.type,
+                        .data = buffer[0..msg_state.?.size],
+                    };
+
+                    buffer_tail = buffer_tail[payload_len..];
                 },
                 .close => {
-                    std.debug.print(
-                        "Received close frame\nResponding with close frame before closing\n",
-                        .{},
-                    );
                     const empty: []u8 = "";
                     self.writeFrame(Opcode.close, empty);
                     break :outer; // disconnect
                 },
-                .ping => { // respond with pong, echoing payload
-                    std.debug.print(
-                        "Received ping frame with a {d}-byte payload\nResponding with pong\n",
-                        .{payload.len},
-                    );
-                    self.writeFrame(Opcode.pong, payload);
-                },
-                .pong => std.debug.print("Received pong\n", .{}),
+                .ping => self.writeFrame(Opcode.pong, payload),
+                .pong => {},
             }
         }
+
         std.debug.print("Closing connection\n", .{});
         return null;
     }
@@ -286,8 +356,21 @@ const Client = struct {
             },
         }
 
+        // next four bytes: mask key
         std.mem.copyForwards(u8, header[header_len..], &mask_key);
         header_len += mask_key.len;
+
+        std.debug.print("Writing {s} frame with a {d}-byte payload\n", .{
+            switch (opcode) {
+                .text => "text",
+                .binary => "binary",
+                .continuation => "continuation",
+                .ping => "ping",
+                .pong => "pong",
+                .close => "close",
+            },
+            payload.len,
+        });
 
         writer.writeAll(header[0..header_len]) catch @panic("Failed to write header");
 
@@ -411,7 +494,11 @@ test "autobahn" {
         const client = try Client.Connect(path);
         defer client.deinit();
 
-        while (try client.read(buffer)) |message| {
+        connected: while (try client.read(buffer)) |message| {
+            // wstest requires that you validate UTF8
+            if (message.type == Message.Type.text) {
+                if (!std.unicode.utf8ValidateSlice(message.data)) break :connected;
+            }
             // wstest expects all messages to be echoed
             std.debug.print("Responding with echo\n", .{});
             client.writeMessage(message);
