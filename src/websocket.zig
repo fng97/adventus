@@ -187,6 +187,7 @@ const Client = struct {
                 else => unreachable,
             };
 
+            // TODO: raise error if buffer is not big enough
             // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
             const payload = buffer[0..payload_len];
 
@@ -293,6 +294,13 @@ const Client = struct {
         }
 
         writer.writeAll(payload) catch @panic("Failed to write payload");
+    }
+
+    fn writeMessage(self: *const Client, msg: Message) void {
+        self.writeFrame(switch (msg.type) {
+            .text => Opcode.text,
+            .binary => Opcode.binary,
+        }, msg.data);
     }
 
     fn deinit(self: *const Client) void {
@@ -404,11 +412,7 @@ test "autobahn" {
         while (try client.read(buffer)) |message| {
             // wstest expects all messages to be echoed
             std.debug.print("Responding with echo\n", .{});
-            // TODO: add sendMessage wrapper of writeFrame for application use
-            client.writeFrame(switch (message.type) {
-                .text => Opcode.text,
-                .binary => Opcode.binary,
-            }, message.data);
+            client.writeMessage(message);
         }
     }
 
