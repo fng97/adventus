@@ -23,6 +23,13 @@ const std = @import("std");
 //  |                     Payload Data continued ...                |
 //  +---------------------------------------------------------------+
 
+// bit masks for first two bytes in frame
+const fin_mask = 0b10000000; // byte 1: FIN
+const rsv_mask = 0b01110000; // byte 1: RSV
+const opc_mask = 0b00001111; // byte 1: opcode
+const msk_mask = 0b10000000; // byte 2: MASK
+const len_mask = 0b01111111; // byte 2: Payload len
+
 /// This type is used by the application to handle messages. A Message
 /// encapsulates the data received in text and binary frames (or text/binary
 /// re-assembled from fragmented frames).
@@ -52,13 +59,10 @@ fn maskKey() [4]u8 {
 }
 
 const Client = struct {
-    allocator: std.mem.Allocator,
     stream: std.net.Stream,
 
-    fn Connect(
-        allocator: std.mem.Allocator,
-        path: []const u8,
-    ) !Client {
+    /// Connect socket to server and send upgrade handshake.
+    fn Connect(path: []const u8) !Client {
         const host = "127.0.0.1";
         const port = 9001;
 
@@ -73,71 +77,69 @@ const Client = struct {
 
         // UPGRADE TO WEBSOCKET CONNECTION
 
+        var buffer: [512]u8 = undefined;
+
         // generate random WebSocket key
         var ws_key: [24]u8 = undefined;
         var random_bytes: [16]u8 = undefined;
         std.crypto.random.bytes(&random_bytes);
         _ = std.base64.standard.Encoder.encode(&ws_key, &random_bytes);
 
-        // TODO: replace with bufprint so we can remove allocator arg
-        const upgrade_request = try std.fmt.allocPrint(allocator, "GET {s} HTTP/1.1\r\n" ++
-            "Host: {s}:{d}\r\n" ++
-            "Upgrade: websocket\r\n" ++
-            "Connection: Upgrade\r\n" ++
-            "Sec-WebSocket-Key: {s}\r\n" ++
-            "Sec-WebSocket-Version: 13\r\n" ++
-            "\r\n", .{ path, host, port, ws_key });
-        defer allocator.free(upgrade_request);
+        const upgrade_request = try std.fmt.bufPrint(
+            &buffer,
+            "GET {s} HTTP/1.1\r\n" ++
+                "Host: {s}:{d}\r\n" ++
+                "Upgrade: websocket\r\n" ++
+                "Connection: Upgrade\r\n" ++
+                "Sec-WebSocket-Key: {s}\r\n" ++
+                "Sec-WebSocket-Version: 13\r\n" ++
+                "\r\n",
+            .{ path, host, port, ws_key },
+        );
 
-        // send the upgrade request
         std.debug.print("Sending upgrade request\n", .{});
         try writer.writeAll(upgrade_request);
 
         // VERIFY WE GOT A SUCCESSFUL UPGRADE RESPONSE
 
-        var response_buffer = std.ArrayList(u8).init(allocator);
-        defer response_buffer.deinit();
+        const expected_status = "HTTP/1.1 101 Switching Protocols\r\n";
+        var status: [expected_status.len]u8 = undefined;
+        try reader.readNoEof(&status);
+        try std.testing.expect(std.mem.eql(u8, &status, expected_status));
 
-        // TODO: read into buffer instead so we can remove allocator arg
-        // read until end of HTTP headers
-        const delimiter = "\r\n\r\n";
-        while (true) {
-            const byte = try reader.readByte();
-            try response_buffer.append(byte);
-
-            // check last four bytes for delimiter
-            if (response_buffer.items.len >= delimiter.len) {
-                const tail = response_buffer.items[(response_buffer.items.len - delimiter.len)..];
-                if (std.mem.eql(u8, tail, delimiter)) break;
+        // read one line at a time until end of header: line with just "\r\n"
+        while (try reader.readUntilDelimiterOrEof(&buffer, '\n')) |line| {
+            if (line[0] == '\r') {
+                return Client{
+                    .stream = stream,
+                };
             }
         }
 
-        try std.testing.expect(std.mem.startsWith(u8, response_buffer.items, "HTTP/1.1 101")); // FIXME: check this first
-
-        return Client{
-            .allocator = allocator,
-            .stream = stream,
-        };
+        return error.InvalidUpgradeResponse;
     }
 
+    /// Read frames until a full message has been read then yield to
+    /// application. This function must be called in a loop to ensure we're
+    /// responding to pings with pongs.
     fn read(
         self: *const Client,
         buffer: []u8,
     ) !?Message {
         const reader = self.stream.reader();
 
-        // START PROCESSING FRAMES
+        outer: while (true) { // read one frame at a time
+            // refer to frame structure at the top of this file
 
-        outer: while (true) { // read one frame at a time, refer to frame structure at the top of this file
             std.debug.print("Reading frame\n", .{});
 
             const frame_header = try reader.readBytesNoEof(2);
 
-            // first byte: check fin and opcode(ignoring rsvx)
-            const fin = frame_header[0] & 0b10000000 != 0;
-            const rsv = frame_header[0] & 0b01110000;
-            const opcode: Opcode = switch (frame_header[0] & 0b00001111) { // FIXME: nicer way to handle this?
-                0x0, 0x1, 0x2, 0x8, 0x9, 0xA => |o| @enumFromInt(o), // otherwise @enumFromInt for invalid opcode is UB
+            // first byte: check fin and opcode (ignoring rsv)
+            const fin = frame_header[0] & fin_mask != 0;
+            const rsv = frame_header[0] & rsv_mask;
+            const opcode: Opcode = switch (frame_header[0] & opc_mask) {
+                0x0, 0x1, 0x2, 0x8, 0x9, 0xA => |o| @enumFromInt(o),
                 else => |o| {
                     std.debug.print("Unknown opcode: {x}, closing\n", .{o});
                     break :outer;
@@ -149,10 +151,10 @@ const Client = struct {
                 break :outer;
             }
 
-            // second byte: mask bit and payload length
-            const is_masked = (frame_header[1] & 0b10000000) != 0;
+            // second byte: check mask bit and payload length
+            const is_masked = (frame_header[1] & msk_mask) != 0;
             try std.testing.expect(!is_masked); // server messages not masked
-            const len_byte: u8 = frame_header[1] & 0b01111111;
+            const len_byte: u8 = frame_header[1] & len_mask;
 
             switch (opcode) {
                 .close, .ping, .pong => { // control frame checks
@@ -187,7 +189,8 @@ const Client = struct {
                 else => unreachable,
             };
 
-            // TODO: raise error if buffer is not big enough
+            if (payload_len > buffer.len) return error.BufferTooSmallForPayload;
+
             // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
             const payload = buffer[0..payload_len];
 
@@ -221,7 +224,7 @@ const Client = struct {
                         "Received close frame\nResponding with close frame before closing\n",
                         .{},
                     );
-                    const empty: []u8 = ""; // FIXME: use optional parameter instead
+                    const empty: []u8 = "";
                     self.writeFrame(Opcode.close, empty);
                     break :outer; // disconnect
                 },
@@ -253,10 +256,10 @@ const Client = struct {
         var header_len: usize = 2;
 
         // first byte: fin (true) | rsv (none) | opcode
-        header[0] = 0x80 | @intFromEnum(opcode);
+        header[0] = fin_mask | @intFromEnum(opcode);
 
         // second byte: mask (true) | payload length
-        header[1] = 0x80; // start by setting mask bet, then or with payload length
+        header[1] = msk_mask; // first set mask bit (client frames always masked) then or with payload length
         switch (payload.len) {
             0...125 => {
                 header[1] |= @as(u8, @intCast(payload.len)); // fits in 7-bit length
@@ -370,7 +373,7 @@ test "autobahn" {
     const case_count: usize = blk: {
         std.debug.print("\nGETTING CASE COUNT\n\n", .{});
 
-        const client = try Client.Connect(allocator, "/getCaseCount");
+        const client = try Client.Connect("/getCaseCount");
         defer client.deinit();
 
         while (try client.read(buffer)) |message| { // only expecting one message
@@ -386,7 +389,6 @@ test "autobahn" {
         std.debug.print("\nGENERATING RESULTS REPORT\n\n", .{});
 
         const client = Client.Connect(
-            allocator,
             "/updateReports?agent=Adventus",
         ) catch @panic("Failed to connect client");
         defer client.deinit();
@@ -406,7 +408,7 @@ test "autobahn" {
         );
         defer allocator.free(path);
 
-        const client = try Client.Connect(allocator, path);
+        const client = try Client.Connect(path);
         defer client.deinit();
 
         while (try client.read(buffer)) |message| {
