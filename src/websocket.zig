@@ -1,5 +1,13 @@
 const std = @import("std");
 
+// TODO:
+// - add error handling
+// - remove test assertions: replace with debug asserts or error handling
+// - validate Sec-WebSocket-Accept header
+// - TLS support
+// - timeout handling?
+// - accept hostname/URI and port as parameter
+
 // Refer to the spec at https://datatracker.ietf.org/doc/html/rfc6455
 //
 //                          Frame Structure
@@ -58,6 +66,10 @@ fn maskKey() [4]u8 {
     return m;
 }
 
+/// A WebSocket Client.
+///
+/// This client does not validate UTF-8. That is left to the application. See
+/// `std.unicode.utf8ValidateSlice`.
 const Client = struct {
     stream: std.net.Stream,
 
@@ -169,7 +181,7 @@ const Client = struct {
 
         // START READING, ONE FRAME AT A TIME
 
-        outer: while (true) {
+        read_loop: while (true) {
             std.debug.print("Reading frame\n", .{});
 
             // READ HEADER
@@ -184,13 +196,13 @@ const Client = struct {
                 0x0, 0x1, 0x2, 0x8, 0x9, 0xA => |o| @enumFromInt(o),
                 else => |o| {
                     std.debug.print("Unknown opcode: {x}, closing\n", .{o});
-                    break :outer;
+                    break :read_loop;
                 },
             };
 
             if (rsv != 0) {
                 std.debug.print("Reserved bits usage not supported, closing\n", .{});
-                break :outer;
+                break :read_loop;
             }
 
             // second byte: check mask bit and payload length
@@ -202,11 +214,11 @@ const Client = struct {
                 .close, .ping, .pong => { // control frame checks
                     if (!fin) {
                         std.debug.print("Control frames cannot be fragmented, closing\n", .{});
-                        break :outer;
+                        break :read_loop;
                     }
                     if (len_byte > 125) {
                         std.debug.print("Control frame payloads cannot exceed 125 bytes, closing\n", .{});
-                        break :outer;
+                        break :read_loop;
                     }
                 },
                 else => {},
@@ -256,10 +268,10 @@ const Client = struct {
                 .text, .binary => |op| {
                     if (msg_state) |_| {
                         std.debug.print(
-                            "Received non-continuation frame after initial fragment",
+                            "Received non-continuation frame after initial fragment/n",
                             .{},
                         );
-                        break :outer; // disconnect
+                        break :read_loop; // disconnect
                     }
 
                     const msg_type: Message.Type = switch (op) {
@@ -273,20 +285,23 @@ const Client = struct {
                             .type = msg_type,
                             .data = payload,
                         };
-                    } // else received initial fragment: keep reading
+                    }
+
+                    // received initial fragment: keep reading
                     msg_state = FragmentedMessageState{
                         .size = payload_len,
                         .type = msg_type,
                     };
+
                     buffer_tail = buffer_tail[payload_len..];
                 },
                 .continuation => { // received fragment
                     if (msg_state == null) {
                         std.debug.print(
-                            "Received continuation fragment without intial fraagment\n",
+                            "Received continuation fragment without intial fragment\n",
                             .{},
                         );
-                        break :outer; // disconnect
+                        break :read_loop; // disconnect
                     }
 
                     msg_state.?.size += payload_len;
@@ -301,7 +316,7 @@ const Client = struct {
                 .close => {
                     const empty: []u8 = "";
                     self.writeFrame(Opcode.close, empty);
-                    break :outer; // disconnect
+                    break :read_loop; // disconnect
                 },
                 .ping => self.writeFrame(Opcode.pong, payload),
                 .pong => {},
@@ -314,8 +329,8 @@ const Client = struct {
 
     /// Write a frame to the server.
     ///
-    /// NOTE: this overwrites the payload memory. The payload is read and
-    /// overwritten with the masked payload one byte at a time.
+    /// NOTE: this overwrites the payload memory. The payload is overwritten
+    /// with the masked payload one byte at a time.
     fn writeFrame(self: *const Client, opcode: Opcode, payload: []u8) void {
         const writer = self.stream.writer();
 
@@ -332,7 +347,7 @@ const Client = struct {
         header[1] = msk_mask; // first set mask bit (client frames always masked) then or with payload length
         switch (payload.len) {
             0...125 => {
-                header[1] |= @as(u8, @intCast(payload.len)); // fits in 7-bit length
+                header[1] |= @as(u8, @intCast(payload.len));
             },
             126...std.math.maxInt(u16) => {
                 header[1] |= 126; // use 16-bit extended length
