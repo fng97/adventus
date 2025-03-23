@@ -1,9 +1,15 @@
 const std = @import("std");
 
 // TODO:
+//
+// - handle close codes
+// - profile throughput and latency
 // - add error handling
-// - remove test assertions: replace with debug asserts or error handling
+// - replace test assertions with debug asserts or error handling
+// - configure autobahn to use "strict" mode?
+//
 // - validate Sec-WebSocket-Accept header
+// - support send fragmentation?
 // - TLS support
 // - timeout handling?
 // - accept hostname/URI and port as parameter
@@ -507,7 +513,6 @@ test "autobahn" {
         defer allocator.free(path);
 
         const client = try Client.Connect(path);
-        defer client.deinit();
 
         connected: while (try client.read(buffer)) |message| {
             // wstest requires that you validate UTF8
@@ -517,7 +522,7 @@ test "autobahn" {
             // wstest expects all messages to be echoed
             std.debug.print("Responding with echo\n", .{});
             client.writeMessage(message);
-        }
+        } else client.deinit();
     }
 
     // TODO: CHECK RESULTS BY COMPARING TO EXPECTED INDEX.JSON
