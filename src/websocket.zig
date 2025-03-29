@@ -2,17 +2,18 @@ const std = @import("std");
 
 // TODO:
 //
-// - handle close codes
+// - add logging
 // - profile throughput and latency
-// - add error handling
-// - replace test assertions with debug asserts or error handling
-// - configure autobahn to use "strict" mode?
+// - handle all errors
+// - add comparing wstest results to test
 //
+// - add references to RFC throughout comments and docs
 // - validate Sec-WebSocket-Accept header
 // - support send fragmentation?
 // - TLS support
 // - timeout handling?
 // - accept hostname/URI and port as parameter
+// - test autobahn test cases in parallel to speed them up?
 
 // Refer to the spec at https://datatracker.ietf.org/doc/html/rfc6455
 //
@@ -51,6 +52,14 @@ const Message = struct {
     const Type = enum {
         text,
         binary,
+
+        fn fromOpcode(opcode: Opcode) Type {
+            return switch (opcode) {
+                .text => .text,
+                .binary => .binary,
+                else => unreachable,
+            };
+        }
     };
 
     type: Type,
@@ -64,13 +73,54 @@ const Opcode = enum(u8) {
     close = 0x8,
     ping = 0x9,
     pong = 0xA,
+
+    fn fromByte(byte: u8) ?Opcode {
+        return switch (byte) {
+            // TODO: there must be a better way, this way we have to change the enum in two places
+            0x0, 0x1, 0x2, 0x8, 0x9, 0xA => |o| @enumFromInt(o),
+            else => null,
+        };
+    }
+
+    fn str(self: Opcode) []const u8 {
+        return switch (self) {
+            .text => "text",
+            .binary => "binary",
+            .continuation => "continuation",
+            .ping => "ping",
+            .pong => "pong",
+            .close => "close",
+        };
+    }
 };
 
-fn maskKey() [4]u8 {
-    var m: [4]u8 = undefined;
-    std.crypto.random.bytes(&m);
-    return m;
-}
+/// Close codes defined by the spec for the closing handshake.
+const CloseCode = enum(u16) {
+    normal_closure = 1000,
+    going_away = 1001,
+    protocol_error = 1002,
+    unsupported_data = 1003,
+    abnormal_closure = 1006,
+    invalid_payload_data = 1007,
+    policy_violation = 1008,
+    message_too_big = 1009,
+    missing_extension = 1010,
+    internal_error = 1011,
+    tls_handshake_failure = 1015,
+
+    fn fromBytes(bytes: *const [2]u8) ?CloseCode {
+        return switch (std.mem.readInt(u16, bytes, .big)) { // network byte ordering
+            1000, 1001, 1002, 1003, 1006, 1007, 1008, 1009, 1010, 1011, 1015 => |code| @enumFromInt(code),
+            else => null,
+        };
+    }
+
+    fn toBytes(self: CloseCode) [2]u8 {
+        var close_code: [2]u8 = undefined;
+        std.mem.writeInt(u16, &close_code, @intFromEnum(self), .big);
+        return close_code;
+    }
+};
 
 /// A WebSocket Client.
 ///
@@ -78,6 +128,18 @@ fn maskKey() [4]u8 {
 /// `std.unicode.utf8ValidateSlice`.
 const Client = struct {
     stream: std.net.Stream,
+
+    const Error = error{
+        ReservedOpcodeUsed,
+        ReservedBitsSet,
+        MaskBitSet,
+        ControlFrameWithFinSet,
+        ControlFrameWithExtendedPayloadLen,
+        BufferTooSmallForPayload,
+        ContinuationBeforeInitialFragment,
+        IncompleteFragmentedMessage,
+        ConnectionClosedByServer,
+    };
 
     /// Connect socket to server and send upgrade handshake.
     fn Connect(path: []const u8) !Client {
@@ -123,15 +185,11 @@ const Client = struct {
         const expected_status = "HTTP/1.1 101 Switching Protocols\r\n";
         var status: [expected_status.len]u8 = undefined;
         try reader.readNoEof(&status);
-        try std.testing.expect(std.mem.eql(u8, &status, expected_status));
+        if (!std.mem.eql(u8, &status, expected_status)) return error.InvalidUpgradeResponse;
 
         // read one line at a time until end of header: line with just "\r\n"
         while (try reader.readUntilDelimiterOrEof(&buffer, '\n')) |line| {
-            if (line[0] == '\r') {
-                return Client{
-                    .stream = stream,
-                };
-            }
+            if (line[0] == '\r') return Client{ .stream = stream };
         }
 
         return error.InvalidUpgradeResponse;
@@ -170,7 +228,7 @@ const Client = struct {
     fn read(
         self: *const Client,
         buffer: []u8,
-    ) !?Message {
+    ) !Message {
         const reader = self.stream.reader();
 
         // This slice represents the available portion of the buffer where new
@@ -187,7 +245,7 @@ const Client = struct {
 
         // START READING, ONE FRAME AT A TIME
 
-        read_loop: while (true) {
+        while (true) {
             std.debug.print("Reading frame\n", .{});
 
             // READ HEADER
@@ -198,34 +256,18 @@ const Client = struct {
             // first byte: check fin and opcode (ignoring rsv)
             const fin = frame_header[0] & fin_mask != 0;
             const rsv = frame_header[0] & rsv_mask;
-            const opcode: Opcode = switch (frame_header[0] & opc_mask) {
-                0x0, 0x1, 0x2, 0x8, 0x9, 0xA => |o| @enumFromInt(o),
-                else => |o| {
-                    std.debug.print("Unknown opcode: {x}, closing\n", .{o});
-                    break :read_loop;
-                },
-            };
-
-            if (rsv != 0) {
-                std.debug.print("Reserved bits usage not supported, closing\n", .{});
-                break :read_loop;
-            }
+            if (rsv != 0) return Error.ReservedBitsSet; // extensions not supported
+            const opcode: Opcode = Opcode.fromByte(frame_header[0] & opc_mask) orelse return Error.ReservedOpcodeUsed;
 
             // second byte: check mask bit and payload length
             const is_masked = (frame_header[1] & msk_mask) != 0;
-            try std.testing.expect(!is_masked); // server messages not masked
+            if (is_masked) return Error.MaskBitSet; // server frames are never masked
             const len_byte: u8 = frame_header[1] & len_mask;
 
-            switch (opcode) {
-                .close, .ping, .pong => { // control frame checks
-                    if (!fin) {
-                        std.debug.print("Control frames cannot be fragmented, closing\n", .{});
-                        break :read_loop;
-                    }
-                    if (len_byte > 125) {
-                        std.debug.print("Control frame payloads cannot exceed 125 bytes, closing\n", .{});
-                        break :read_loop;
-                    }
+            switch (opcode) { // control frame checks
+                .close, .ping, .pong => {
+                    if (!fin) return Error.ControlFrameWithFinSet;
+                    if (len_byte > 125) return Error.ControlFrameWithExtendedPayloadLen;
                 },
                 else => {},
             }
@@ -254,83 +296,62 @@ const Client = struct {
             // READ AND HANDLE PAYLOAD
 
             // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
-            if (payload_len > buffer_tail.len) return error.BufferTooSmallForPayload;
+            if (payload_len > buffer_tail.len) return Error.BufferTooSmallForPayload;
             const payload = buffer_tail[0..payload_len];
             try reader.readNoEof(payload);
 
-            std.debug.print("Received {s} frame with a {d}-byte payload\n", .{
-                switch (opcode) {
-                    .text => "text",
-                    .binary => "binary",
-                    .continuation => "continuation",
-                    .ping => "ping",
-                    .pong => "pong",
-                    .close => "close",
-                },
-                payload.len,
-            });
+            std.debug.print("Received {s} frame with a {d}-byte payload\n", .{ opcode.str(), payload.len });
 
             switch (opcode) {
-                .text, .binary => |op| {
-                    if (msg_state) |_| {
-                        std.debug.print(
-                            "Received non-continuation frame after initial fragment/n",
-                            .{},
-                        );
-                        break :read_loop; // disconnect
-                    }
+                .text, .binary => |o| {
+                    if (msg_state != null) return Error.IncompleteFragmentedMessage;
 
-                    const msg_type: Message.Type = switch (op) {
-                        .text => .text,
-                        .binary => .binary,
-                        else => unreachable,
-                    };
-
-                    if (fin) { // received unfragmented message
-                        return Message{
-                            .type = msg_type,
-                            .data = payload,
-                        };
-                    }
+                    const msg_type = Message.Type.fromOpcode(o);
+                    if (fin) return Message{ .type = msg_type, .data = payload };
 
                     // received initial fragment: keep reading
-                    msg_state = FragmentedMessageState{
-                        .size = payload_len,
-                        .type = msg_type,
-                    };
+                    msg_state = FragmentedMessageState{ .size = payload_len, .type = msg_type };
 
                     buffer_tail = buffer_tail[payload_len..];
                 },
                 .continuation => { // received fragment
-                    if (msg_state == null) {
-                        std.debug.print(
-                            "Received continuation fragment without intial fragment\n",
-                            .{},
-                        );
-                        break :read_loop; // disconnect
-                    }
-
+                    if (msg_state == null) return Error.ContinuationBeforeInitialFragment;
                     msg_state.?.size += payload_len;
-
-                    if (fin) return Message{ // final fragment: assemble message
-                        .type = msg_state.?.type,
-                        .data = buffer[0..msg_state.?.size],
-                    };
-
+                    if (fin) return Message{ .type = msg_state.?.type, .data = buffer[0..msg_state.?.size] };
                     buffer_tail = buffer_tail[payload_len..];
                 },
                 .close => {
-                    const empty: []u8 = "";
-                    self.writeFrame(Opcode.close, empty);
-                    break :read_loop; // disconnect
+                    if (payload.len >= 2) if (CloseCode.fromBytes(payload[0..2])) |close_code| {
+                        const close_reason = payload[2..];
+                        std.debug.print(
+                            "Received close frame with code {d} and reason: {s}\n",
+                            .{ @intFromEnum(close_code), close_reason },
+                        );
+                    } else {}; //return self.close(.protocol_error, "Received invalid close code");
+
+                    self.close(CloseCode.normal_closure, "");
+                    return Error.ConnectionClosedByServer;
                 },
                 .ping => self.writeFrame(Opcode.pong, payload),
                 .pong => {},
             }
         }
+    }
 
-        std.debug.print("Closing connection\n", .{});
-        return null;
+    /// Send a close frame to the server with a close code and optional close reason. This should be
+    /// called before disconnecting the client for a "clean" disconnect. See `CloseCode`.
+    fn close(self: *const Client, close_code: CloseCode, comptime msg: []const u8) void {
+        comptime if (msg.len > 123) @compileError("Expected close reason len to be <=123 (125 - 2 for close code)");
+
+        var close_payload: [125]u8 = undefined; // max control frame payload len is 125
+        var close_payload_len: usize = 2;
+
+        const close_code_bytes = close_code.toBytes();
+        std.mem.copyForwards(u8, close_payload[0..2], &close_code_bytes);
+        std.mem.copyForwards(u8, close_payload[2..], msg);
+        close_payload_len += msg.len;
+
+        self.writeFrame(Opcode.close, close_payload[0..close_payload_len]);
     }
 
     /// Write a frame to the server.
@@ -340,7 +361,11 @@ const Client = struct {
     fn writeFrame(self: *const Client, opcode: Opcode, payload: []u8) void {
         const writer = self.stream.writer();
 
-        const mask_key = maskKey();
+        const mask_key = blk: {
+            var m: [4]u8 = undefined;
+            std.crypto.random.bytes(&m);
+            break :blk m;
+        };
 
         // max header length is 14: 2 (min) + 8 (extended payload len) + 4 (mask key)
         var header: [14]u8 = undefined;
@@ -478,13 +503,12 @@ test "autobahn" {
         std.debug.print("\nGETTING CASE COUNT\n\n", .{});
 
         const client = try Client.Connect("/getCaseCount");
-        defer client.deinit();
 
-        while (try client.read(buffer)) |message| { // only expecting one message
+        while (client.read(buffer)) |message| { // only expecting one message
             try std.testing.expect(message.type == .text);
             std.debug.print("Case count: {s}\n", .{message.data});
             break :blk try std.fmt.parseInt(u16, message.data, 10);
-        }
+        } else |_| client.deinit();
 
         @panic("Failed to retrieve case count from wstest");
     };
@@ -495,11 +519,8 @@ test "autobahn" {
         const client = Client.Connect(
             "/updateReports?agent=Adventus",
         ) catch @panic("Failed to connect client");
-        defer client.deinit();
 
-        while (client.read(
-            buffer,
-        ) catch @panic("Failed to read a message\n")) |_| {}
+        while (client.read(buffer)) |_| {} else |_| client.deinit();
     }
 
     for (1..case_count + 1) |case| {
@@ -514,7 +535,7 @@ test "autobahn" {
 
         const client = try Client.Connect(path);
 
-        connected: while (try client.read(buffer)) |message| {
+        connected: while (client.read(buffer)) |message| {
             // wstest requires that you validate UTF8
             if (message.type == Message.Type.text) {
                 if (!std.unicode.utf8ValidateSlice(message.data)) break :connected;
@@ -522,7 +543,7 @@ test "autobahn" {
             // wstest expects all messages to be echoed
             std.debug.print("Responding with echo\n", .{});
             client.writeMessage(message);
-        } else client.deinit();
+        } else |_| client.deinit();
     }
 
     // TODO: CHECK RESULTS BY COMPARING TO EXPECTED INDEX.JSON
