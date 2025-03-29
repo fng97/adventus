@@ -100,7 +100,6 @@ const CloseCode = enum(u16) {
     going_away = 1001,
     protocol_error = 1002,
     unsupported_data = 1003,
-    abnormal_closure = 1006,
     invalid_payload_data = 1007,
     policy_violation = 1008,
     message_too_big = 1009,
@@ -110,7 +109,7 @@ const CloseCode = enum(u16) {
 
     fn fromBytes(bytes: *const [2]u8) ?CloseCode {
         return switch (std.mem.readInt(u16, bytes, .big)) { // network byte ordering
-            1000, 1001, 1002, 1003, 1006, 1007, 1008, 1009, 1010, 1011, 1015 => |code| @enumFromInt(code),
+            1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1015 => |code| @enumFromInt(code),
             else => null,
         };
     }
@@ -130,15 +129,17 @@ const Client = struct {
     stream: std.net.Stream,
 
     const Error = error{
+        ConnectionClosedByServer,
         ReservedOpcodeUsed,
         ReservedBitsSet,
         MaskBitSet,
-        ControlFrameWithFinSet,
+        ControlFrameWithFinClear,
         ControlFrameWithExtendedPayloadLen,
         BufferTooSmallForPayload,
         ContinuationBeforeInitialFragment,
         IncompleteFragmentedMessage,
-        ConnectionClosedByServer,
+        InvalidCloseCode,
+        InvalidUtf8,
     };
 
     /// Connect socket to server and send upgrade handshake.
@@ -231,8 +232,6 @@ const Client = struct {
         // START READING, ONE FRAME AT A TIME
 
         while (true) {
-            std.debug.print("Reading frame\n", .{});
-
             // This slice represents the available portion of the buffer where
             // further message fragments can be written. As we receive and store
             // fragments, we adjust this slice to start immediately after the
@@ -247,18 +246,33 @@ const Client = struct {
             // first byte: check fin and opcode (ignoring rsv)
             const fin = frame_header[0] & fin_mask != 0;
             const rsv = frame_header[0] & rsv_mask;
-            if (rsv != 0) return Error.ReservedBitsSet; // extensions not supported
-            const opcode: Opcode = Opcode.fromByte(frame_header[0] & opc_mask) orelse return Error.ReservedOpcodeUsed;
+            if (rsv != 0) { // extensions not supported
+                self.close(.protocol_error, "Received frame with RSV set but extension not negotiated");
+                return Error.ReservedBitsSet;
+            }
+            const opcode: Opcode = Opcode.fromByte(frame_header[0] & opc_mask) orelse {
+                self.close(.protocol_error, "Received frame with reserved opcode but extension not negotiated");
+                return Error.ReservedOpcodeUsed;
+            };
 
             // second byte: check mask bit and payload length
             const is_masked = (frame_header[1] & msk_mask) != 0;
-            if (is_masked) return Error.MaskBitSet; // server frames are never masked
+            if (is_masked) { // server frames are never masked
+                self.close(.protocol_error, "Received masked frame");
+                return Error.MaskBitSet;
+            }
             const len_byte: u8 = frame_header[1] & len_mask;
 
             switch (opcode) { // control frame checks
                 .close, .ping, .pong => {
-                    if (!fin) return Error.ControlFrameWithFinSet;
-                    if (len_byte > 125) return Error.ControlFrameWithExtendedPayloadLen;
+                    if (!fin) {
+                        self.close(.protocol_error, "Received fragmented control frame");
+                        return Error.ControlFrameWithFinClear;
+                    }
+                    if (len_byte > 125) {
+                        self.close(.protocol_error, "Received control frame with len > 125");
+                        return Error.ControlFrameWithExtendedPayloadLen;
+                    }
                 },
                 else => {},
             }
@@ -286,32 +300,64 @@ const Client = struct {
 
             // READ AND HANDLE PAYLOAD
 
+            if (payload_len > buffer_tail.len) {
+                self.close(CloseCode.message_too_big, "");
+                return Error.BufferTooSmallForPayload;
+            }
+
             // remaining bytes are the payload (messages from server are unmasked, so the key is omitted)
-            if (payload_len > buffer_tail.len) return Error.BufferTooSmallForPayload;
             const payload = buffer_tail[0..payload_len];
             try reader.readNoEof(payload);
+
+            // TODO: Fix UTF-8 validation
+            // - do checks for .text, .close, and .continuation
+            // - check individual fragments but only check within code points
+            // - check close reason
+            // if (opcode == .text and !std.unicode.utf8ValidateSlice(payload)) {
+            //     self.close(CloseCode.invalid_payload_data, "Received text frame with invalid UTF8");
+            //     return Error.InvalidUtf8;
+            // }
 
             std.debug.print("Received {s} frame with a {d}-byte payload\n", .{ opcode.str(), payload.len });
 
             switch (opcode) {
                 .text, .binary => |o| {
-                    if (fragmented_message != null) return Error.IncompleteFragmentedMessage;
+                    if (fragmented_message != null) {
+                        self.close(
+                            CloseCode.protocol_error,
+                            "Received frame with FIN set before fragmented message completed",
+                        );
+                        return Error.IncompleteFragmentedMessage;
+                    }
                     const msg = Message{ .type = .fromOpcode(o), .data = payload };
                     if (fin) return msg else fragmented_message = msg;
                 },
                 .continuation => { // received fragment
-                    if (fragmented_message == null) return Error.ContinuationBeforeInitialFragment;
+                    if (fragmented_message == null) {
+                        self.close(CloseCode.protocol_error, "Received continuation frame without initial fragment");
+                        return Error.ContinuationBeforeInitialFragment;
+                    }
                     fragmented_message.?.data = buffer[0 .. fragmented_message.?.data.len + payload.len]; // extend slice
                     if (fin) return fragmented_message.?;
                 },
                 .close => {
-                    if (payload.len >= 2) if (CloseCode.fromBytes(payload[0..2])) |close_code| {
-                        const close_reason = payload[2..];
-                        std.debug.print(
-                            "Received close frame with code {d} and reason: {s}\n",
-                            .{ @intFromEnum(close_code), close_reason },
-                        );
-                    } else {}; //return self.close(.protocol_error, "Received invalid close code");
+                    if (payload.len > 0) {
+                        if (payload.len == 1) {
+                            self.close(CloseCode.protocol_error, "Received close frame with payload length of 1");
+                            return Error.InvalidCloseCode;
+                        }
+
+                        if (CloseCode.fromBytes(payload[0..2])) |close_code| {
+                            const close_reason = payload[2..];
+                            std.debug.print(
+                                "Received close frame with code {d} and reason: {s}\n",
+                                .{ @intFromEnum(close_code), close_reason },
+                            );
+                        } else {
+                            self.close(CloseCode.protocol_error, "Received close frame with invalid close code");
+                            return Error.InvalidCloseCode;
+                        }
+                    }
 
                     self.close(CloseCode.normal_closure, "");
                     return Error.ConnectionClosedByServer;
@@ -327,6 +373,12 @@ const Client = struct {
     /// disconnect.
     fn close(self: *const Client, close_code: CloseCode, comptime msg: []const u8) void {
         comptime if (msg.len > 123) @compileError("Expected close reason len to be <=123 (125 - 2 for close code)");
+
+        std.debug.print("Closing connection with code {d}{s}{s}\n", .{
+            @intFromEnum(close_code),
+            if (msg.len != 0) " and reason: " else "",
+            msg,
+        });
 
         var close_payload: [125]u8 = undefined; // max control frame payload len is 125
         var close_payload_len: usize = 2;
@@ -421,6 +473,8 @@ const Client = struct {
     }
 
     fn deinit(self: *const Client) void {
+        // TODO: figure out how to flush instead
+        std.time.sleep(5 * std.time.ns_per_ms); // in place of flush
         self.stream.close();
     }
 };
@@ -447,7 +501,11 @@ test "autobahn" {
             "--spec=/mount/fuzzingserver.json",
         };
 
-        const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &argv });
+        const result = std.process.Child.run(.{ .allocator = allocator, .argv = &argv }) catch |err| {
+            std.debug.print("If you see 'expected 0, found 125' it means the container wasn't properly stopped. Stop" ++
+                " it with 'docker stop fuzzingserver' and try again\n", .{});
+            return err;
+        };
         defer allocator.free(result.stderr);
         defer allocator.free(result.stdout);
 
@@ -477,7 +535,7 @@ test "autobahn" {
         std.debug.print("Stopped Autobahn fuzzing server container\n", .{});
     }
 
-    std.time.sleep(2 * 1_000_000_000); // wait for the server to start
+    std.time.sleep(2 * std.time.ns_per_s); // wait for the server to start
 
     // CHECK TEST CASE COUNT, RUN ALL TESTS, AND GENERATE REPORT
 
@@ -488,24 +546,22 @@ test "autobahn" {
         std.debug.print("\nGETTING CASE COUNT\n\n", .{});
 
         const client = try Client.Connect("/getCaseCount");
+        defer client.deinit();
 
         while (client.read(buffer)) |message| { // only expecting one message
             try std.testing.expect(message.type == .text);
             std.debug.print("Case count: {s}\n", .{message.data});
             break :blk try std.fmt.parseInt(u16, message.data, 10);
-        } else |_| client.deinit();
+        } else |_| {}
 
         @panic("Failed to retrieve case count from wstest");
     };
 
     defer {
         std.debug.print("\nGENERATING RESULTS REPORT\n\n", .{});
-
-        const client = Client.Connect(
-            "/updateReports?agent=Adventus",
-        ) catch @panic("Failed to connect client");
-
-        while (client.read(buffer)) |_| {} else |_| client.deinit();
+        const client = Client.Connect("/updateReports?agent=Adventus") catch @panic("Failed to connect client");
+        defer client.deinit();
+        while (client.read(buffer)) |_| {} else |_| {}
     }
 
     for (1..case_count + 1) |case| {
@@ -519,16 +575,12 @@ test "autobahn" {
         defer allocator.free(path);
 
         const client = try Client.Connect(path);
+        defer client.deinit();
 
-        connected: while (client.read(buffer)) |message| {
-            // wstest requires that you validate UTF8
-            if (message.type == Message.Type.text) {
-                if (!std.unicode.utf8ValidateSlice(message.data)) break :connected;
-            }
-            // wstest expects all messages to be echoed
+        while (client.read(buffer)) |msg| {
             std.debug.print("Responding with echo\n", .{});
-            client.writeMessage(message);
-        } else |_| client.deinit();
+            client.writeMessage(msg);
+        } else |_| {} // discard errors
     }
 
     // TODO: CHECK RESULTS BY COMPARING TO EXPECTED INDEX.JSON
