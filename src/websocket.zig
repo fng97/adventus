@@ -195,18 +195,10 @@ const Client = struct {
         return error.InvalidUpgradeResponse;
     }
 
-    /// The state of a fragmented message. An instance of this struct is used
-    /// to keep track of the message type given in the initial fragment and the
-    /// total message size which is incremented as further fragments are
-    /// received.
-    const FragmentedMessageState = struct {
-        size: usize = 0,
-        type: Message.Type,
-    };
-
     /// Read frames until a full message has been read then yield to
     /// application. This function must be called in a loop to ensure we're
-    /// responding to pings with pongs.
+    /// responding to pings with pongs. Refer to the frame structure documented
+    /// at the top of this file.
     ///
     /// This handles message fragmentation. Here are some excerpts from section
     /// 5.4 of the RFC:
@@ -231,26 +223,25 @@ const Client = struct {
     ) !Message {
         const reader = self.stream.reader();
 
-        // This slice represents the available portion of the buffer where new
-        // message fragments can be written. As we receive and store fragments,
-        // we adjust this slice to start immediately after the last written
-        // fragment, effectively shrinking it to track the remaining free space.
-        // However, this slice remains unchanged when handling control frames
-        // like pings, since they do not contribute to the message assembly.
-        // The slice does not need to be reset when yielding a complete message
-        // (either unfragmented or fully assembled), as the function returns
-        // to the caller and this variable goes out of scope.
-        var buffer_tail: []u8 = buffer;
-        var msg_state: ?FragmentedMessageState = null;
+        // Used to store message state in the case of fragmentation. This is
+        // instantiated when we receive an initial fragment and data slice is
+        // extended as more fragment payloads are received.
+        var fragmented_message: ?Message = null;
 
         // START READING, ONE FRAME AT A TIME
 
         while (true) {
             std.debug.print("Reading frame\n", .{});
 
+            // This slice represents the available portion of the buffer where
+            // further message fragments can be written. As we receive and store
+            // fragments, we adjust this slice to start immediately after the
+            // last written fragment, effectively shrinking it to track the
+            // remaining free space (i.e. the tail of the buffer).
+            const buffer_tail = if (fragmented_message) |msg| buffer[msg.data.len..] else buffer;
+
             // READ HEADER
 
-            // refer to frame structure at the top of this file
             const frame_header = try reader.readBytesNoEof(2);
 
             // first byte: check fin and opcode (ignoring rsv)
@@ -274,9 +265,9 @@ const Client = struct {
 
             // IF INDICATED, READ EXTENDED PAYLOAD SIZE
 
-            const payload_len = switch (len_byte) { // keep in mind network byte ordering (big endian)
+            const payload_len = switch (len_byte) {
                 0...125 => len_byte,
-                126 => blk: {
+                126 => blk: { // websockets use network byte order (big endian)
                     const len_bytes = try reader.readBytesNoEof(2);
                     break :blk std.mem.bigToNative(
                         u16,
@@ -304,21 +295,14 @@ const Client = struct {
 
             switch (opcode) {
                 .text, .binary => |o| {
-                    if (msg_state != null) return Error.IncompleteFragmentedMessage;
-
-                    const msg_type = Message.Type.fromOpcode(o);
-                    if (fin) return Message{ .type = msg_type, .data = payload };
-
-                    // received initial fragment: keep reading
-                    msg_state = FragmentedMessageState{ .size = payload_len, .type = msg_type };
-
-                    buffer_tail = buffer_tail[payload_len..];
+                    if (fragmented_message != null) return Error.IncompleteFragmentedMessage;
+                    const msg = Message{ .type = .fromOpcode(o), .data = payload };
+                    if (fin) return msg else fragmented_message = msg;
                 },
                 .continuation => { // received fragment
-                    if (msg_state == null) return Error.ContinuationBeforeInitialFragment;
-                    msg_state.?.size += payload_len;
-                    if (fin) return Message{ .type = msg_state.?.type, .data = buffer[0..msg_state.?.size] };
-                    buffer_tail = buffer_tail[payload_len..];
+                    if (fragmented_message == null) return Error.ContinuationBeforeInitialFragment;
+                    fragmented_message.?.data = buffer[0 .. fragmented_message.?.data.len + payload.len]; // extend slice
+                    if (fin) return fragmented_message.?;
                 },
                 .close => {
                     if (payload.len >= 2) if (CloseCode.fromBytes(payload[0..2])) |close_code| {
@@ -338,8 +322,9 @@ const Client = struct {
         }
     }
 
-    /// Send a close frame to the server with a close code and optional close reason. This should be
-    /// called before disconnecting the client for a "clean" disconnect. See `CloseCode`.
+    /// Send a close frame to the server with a close code and close reason.
+    /// This should be called before disconnecting the client for a "clean"
+    /// disconnect.
     fn close(self: *const Client, close_code: CloseCode, comptime msg: []const u8) void {
         comptime if (msg.len > 123) @compileError("Expected close reason len to be <=123 (125 - 2 for close code)");
 
