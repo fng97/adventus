@@ -1,20 +1,5 @@
 const std = @import("std");
 
-// TODO:
-//
-// - add logging
-// - profile throughput and latency
-// - handle all errors
-// - add comparing wstest results to test
-//
-// - add references to RFC throughout comments and docs
-// - validate Sec-WebSocket-Accept header
-// - support send fragmentation?
-// - TLS support
-// - timeout handling?
-// - accept hostname/URI and port as parameter
-// - test autobahn test cases in parallel to speed them up?
-
 // Refer to the spec at https://datatracker.ietf.org/doc/html/rfc6455
 //
 //                          Frame Structure
@@ -75,22 +60,7 @@ const Opcode = enum(u8) {
     pong = 0xA,
 
     fn fromByte(byte: u8) ?Opcode {
-        return switch (byte) {
-            // TODO: there must be a better way, this way we have to change the enum in two places
-            0x0, 0x1, 0x2, 0x8, 0x9, 0xA => |o| @enumFromInt(o),
-            else => null,
-        };
-    }
-
-    fn str(self: Opcode) []const u8 {
-        return switch (self) {
-            .text => "text",
-            .binary => "binary",
-            .continuation => "continuation",
-            .ping => "ping",
-            .pong => "pong",
-            .close => "close",
-        };
+        return std.meta.intToEnum(@This(), byte) catch null;
     }
 };
 
@@ -108,10 +78,7 @@ const CloseCode = enum(u16) {
     tls_handshake_failure = 1015,
 
     fn fromBytes(bytes: *const [2]u8) ?CloseCode {
-        return switch (std.mem.readInt(u16, bytes, .big)) { // network byte ordering
-            1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1015 => |code| @enumFromInt(code),
-            else => null,
-        };
+        return std.meta.intToEnum(@This(), std.mem.readInt(u16, bytes, .big)) catch null;
     }
 
     fn toBytes(self: CloseCode) [2]u8 {
@@ -125,7 +92,7 @@ const CloseCode = enum(u16) {
 ///
 /// This client does not validate UTF-8. That is left to the application. See
 /// `std.unicode.utf8ValidateSlice`.
-const Client = struct {
+pub const Client = struct {
     stream: std.net.Stream,
 
     const Error = error{
@@ -143,7 +110,7 @@ const Client = struct {
     };
 
     /// Connect socket to server and send upgrade handshake.
-    fn Connect(path: []const u8) !Client {
+    pub fn Connect(path: []const u8) !Client {
         const host = "127.0.0.1";
         const port = 9001;
 
@@ -318,7 +285,7 @@ const Client = struct {
             //     return Error.InvalidUtf8;
             // }
 
-            std.debug.print("Received {s} frame with a {d}-byte payload\n", .{ opcode.str(), payload.len });
+            std.debug.print("Received {s} frame with a {d}-byte payload\n", .{ @tagName(opcode), payload.len });
 
             switch (opcode) {
                 .text, .binary => |o| {
@@ -341,23 +308,22 @@ const Client = struct {
                     if (fin) return fragmented_message.?;
                 },
                 .close => {
-                    if (payload.len > 0) {
-                        if (payload.len == 1) {
-                            self.close(CloseCode.protocol_error, "Received close frame with payload length of 1");
-                            return Error.InvalidCloseCode;
-                        }
-
-                        if (CloseCode.fromBytes(payload[0..2])) |close_code| {
-                            const close_reason = payload[2..];
-                            std.debug.print(
-                                "Received close frame with code {d} and reason: {s}\n",
-                                .{ @intFromEnum(close_code), close_reason },
-                            );
-                        } else {
-                            self.close(CloseCode.protocol_error, "Received close frame with invalid close code");
-                            return Error.InvalidCloseCode;
-                        }
+                    if (payload.len == 1) {
+                        self.close(CloseCode.protocol_error, "Received close frame with a one byte payload");
+                        return Error.InvalidCloseCode;
                     }
+
+                    if (payload.len >= 2) if (CloseCode.fromBytes(payload[0..2])) |close_code| {
+                        const close_reason = if (payload.len > 2) payload[2..] else "";
+                        std.debug.print("Received close code {d}{s}{s}\n", .{
+                            @intFromEnum(close_code),
+                            if (close_reason.len != 0) " and reason: " else "",
+                            close_reason,
+                        });
+                    } else {
+                        self.close(CloseCode.protocol_error, "Received close frame with invalid close code");
+                        return Error.InvalidCloseCode;
+                    };
 
                     self.close(CloseCode.normal_closure, "");
                     return Error.ConnectionClosedByServer;
@@ -443,17 +409,7 @@ const Client = struct {
         std.mem.copyForwards(u8, header[header_len..], &mask_key);
         header_len += mask_key.len;
 
-        std.debug.print("Writing {s} frame with a {d}-byte payload\n", .{
-            switch (opcode) {
-                .text => "text",
-                .binary => "binary",
-                .continuation => "continuation",
-                .ping => "ping",
-                .pong => "pong",
-                .close => "close",
-            },
-            payload.len,
-        });
+        std.debug.print("Writing {s} frame with a {d}-byte payload\n", .{ @tagName(opcode), payload.len });
 
         writer.writeAll(header[0..header_len]) catch @panic("Failed to write header");
 
@@ -472,7 +428,7 @@ const Client = struct {
         }, msg.data);
     }
 
-    fn deinit(self: *const Client) void {
+    pub fn deinit(self: *const Client) void {
         // TODO: figure out how to flush instead
         std.time.sleep(5 * std.time.ns_per_ms); // in place of flush
         self.stream.close();
@@ -583,5 +539,17 @@ test "autobahn" {
         } else |_| {} // discard errors
     }
 
-    // TODO: CHECK RESULTS BY COMPARING TO EXPECTED INDEX.JSON
+    // FIXME: Check the JSON results
+    // const fs = std.fs.cwd();
+    // const expected_result_file = try fs.openFile("autobahn-testsuite/index.json", .{});
+    // const expected = try expected_result_file.readToEndAlloc(allocator, 50 * 1024);
+    // defer allocator.free(expected);
+    // expected_result_file.close();
+    //
+    // const result_file = try fs.openFile("autobahn-testsuite/reports/index.json", .{});
+    // const result = try result_file.readToEndAlloc(allocator, 50 * 1024);
+    // defer allocator.free(result);
+    // result_file.close();
+    //
+    // try std.testing.expect(std.mem.eql(u8, expected, result)); // fails because timings change every run
 }
