@@ -4,3 +4,4 @@
 # nix flake direnv
 .direnv
 
+.DS_Store

@@ -1,44 +1,53 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
     rust-overlay.url = "github:oxalica/rust-overlay";
   };
 
-  outputs = { nixpkgs, flake-utils, rust-overlay, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let
-        overlays = [ (import rust-overlay) ];
-        pkgs = import nixpkgs {
-          inherit system overlays;
+  outputs = { self, nixpkgs, rust-overlay }:
+    let
+      supportedSystems =
+        [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      forEachSupportedSystem = f:
+        nixpkgs.lib.genAttrs supportedSystems (system:
+          f {
+            pkgs = import nixpkgs {
+              inherit system;
+              overlays =
+                [ rust-overlay.overlays.default self.overlays.default ];
+            };
+          });
+    in {
+      overlays.default = final: prev: {
+        rustToolchain = prev.rust-bin.stable.latest.default.override {
+          extensions = [ "rust-src" "rustfmt" ];
         };
-        rust-bin = pkgs.rust-bin.stable.latest.default.override {
-          extensions = [ "rust-src" ];
-          targets = [ "x86_64-unknown-linux-musl" ];
-        };
-      in
-      {
-        devShells.default = with pkgs; mkShell {
-          buildInputs = [
-            postgresql
-            sqlx-cli
-            cargo-edit  # for `cargo upgrade`
-            rust-analyzer
-            shellcheck
-            shfmt
+      };
 
-            openssl
-            pkg-config
-            rust-bin
+      devShells = forEachSupportedSystem ({ pkgs }: {
+        default = pkgs.mkShell {
+          packages = with pkgs;
+            [
+              postgresql
+              sqlx-cli
 
-            # use nightly to check for unused deps:
-            # rust-bin.nightly.latest.default
-            # cargo-udeps
-          ];
+              rustToolchain
+              openssl
+              pkg-config
+              cargo-edit
+              rust-analyzer
+            ] ++ lib.optionals pkgs.stdenv.isDarwin
+            [ pkgs.darwin.apple_sdk.frameworks.SystemConfiguration ];
 
-          DATABASE_URL = "postgres://postgres:password@localhost:5432/adventus";
+          env = {
+            RUST_SRC_PATH =
+              "${pkgs.rustToolchain}/lib/rustlib/src/rust/library"; # required by rust-analyzer
+            DATABASE_URL =
+              "postgres://postgres:password@localhost:5432/adventus";
+          };
+
           shellHook = "${pkgs.bash}/bin/bash ./scripts/init_db.sh";
         };
-      }
-    );
+      });
+    };
 }
