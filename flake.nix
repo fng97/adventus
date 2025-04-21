@@ -30,7 +30,7 @@
             [
               postgresql
               sqlx-cli
-
+              cmake
               rustToolchain
               openssl
               pkg-config
