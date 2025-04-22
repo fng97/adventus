@@ -28,14 +28,13 @@
         default = pkgs.mkShell {
           packages = with pkgs;
             [
-              postgresql
-              sqlx-cli
               cmake
               rustToolchain
               openssl
               pkg-config
               cargo-edit
               rust-analyzer
+              ffmpeg
             ] ++ lib.optionals pkgs.stdenv.isDarwin
             [ pkgs.darwin.apple_sdk.frameworks.SystemConfiguration ];
 

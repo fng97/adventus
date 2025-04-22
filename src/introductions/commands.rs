@@ -1,16 +1,10 @@
 use crate::common::{Context, Error};
 use std::fs;
-use std::fs::File;
 use std::path::Path;
+use std::process::Command;
 use std::time::Duration;
-use symphonia::core::{
-    formats::FormatOptions, io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
-};
-use symphonia::default::get_probe;
 
 const INTRO_DIR: &str = "./intros";
-const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
-const MAX_DURATION: Duration = Duration::from_secs(5);
 
 async fn err_say(ctx: &Context<'_>, message: &str) -> Result<(), Error> {
     ctx.say(&format!("🔥 {message}")).await?;
@@ -26,35 +20,67 @@ pub async fn set_intro(
     ctx: Context<'_>,
     #[description = "Attach an audio file"] attachment: poise::serenity_prelude::Attachment,
 ) -> Result<(), Error> {
+    const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+    const MAX_DURATION: Duration = Duration::from_secs(5);
+
     fs::create_dir_all(INTRO_DIR)?; // ensure intros dir exists
 
+    let user_id = ctx.author().id;
+    let guild_id = match ctx.guild_id() {
+        Some(guild_id) => guild_id,
+        None => {
+            err_say(&ctx, "This command can only be used in a server.").await?;
+            return Ok(());
+        }
+    };
+
     if u64::from(attachment.size) > MAX_FILE_SIZE {
-        ctx.say("❌ File size exceeds the 10MB limit.").await?;
+        err_say(&ctx, "File size exceeds the 10MB limit.").await?; // default attachment size limit
         return Ok(());
     }
 
-    let file_extension = attachment.filename.split('.').last().unwrap_or("");
-    if !["mp3"].contains(&file_extension.to_lowercase().as_str()) {
-        ctx.say("❌ Unsupported file type. Please upload an MP3, WAV, or OGG file.")
-            .await?;
-        return Ok(());
-    }
-
-    let file_path = Path::new(INTRO_DIR).join(format!(
-        "{}_{}.{}",
-        ctx.guild_id().unwrap_or_default(),
-        ctx.author().id,
-        file_extension
-    ));
+    let attachment_path = Path::new(INTRO_DIR).join(format!("{}_{}_temp", guild_id, user_id));
+    let new_intro_path = Path::new(INTRO_DIR).join(format!("{}_{}_new.opus", guild_id, user_id));
+    let final_intro_path = Path::new(INTRO_DIR).join(format!("{}_{}.opus", guild_id, user_id));
 
     let file_bytes = attachment.download().await?;
-    fs::write(&file_path, &file_bytes)?;
+    fs::write(&attachment_path, &file_bytes)?;
 
-    if get_audio_duration(&file_path).await? > MAX_DURATION {
-        fs::remove_file(&file_path)?;
-        err_say(&ctx, "Audio duration exceeds the 5-second limit.").await?;
+    let output = Command::new("ffmpeg")
+        .args(&[
+            "-y",                                       // overwrite without asking
+            "-i",                                       // input ↓
+            attachment_path.to_str().unwrap(),          // input file
+            "-t",                                       // trim to duration ↓
+            &format!("{}", MAX_DURATION.as_secs_f64()), // MAX_DURATION seconds
+            "-vn",                                      // drop any video streams
+            "-c:a",                                     // audio codec to use ↓
+            "libopus",                                  // opus
+            "-b:a",                                     // audio bitrate ↓
+            "16k",                                      // ~16 kbps
+            "-ac",                                      // audio channel ↓
+            "1",                                        // mono
+            "-ar",                                      // audio sample rate ↓
+            "16000",                                    // 16 kHz
+            "-application",                             // application type ↓
+            "voip",                                     // tune for VoIP/voice chat
+            "-vbr",                                     // variable bit rate ↓
+            "constrained",                              // constrained
+            new_intro_path.to_str().unwrap(),           // output file
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        fs::remove_file(&attachment_path).ok();
+        fs::remove_file(&new_intro_path).ok();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::warn!("ffmpeg failed with status {}: {}", output.status, stderr);
+        err_say(&ctx, "Failed to process audio.").await?;
         return Ok(());
     }
+
+    fs::rename(&new_intro_path, &final_intro_path)?;
+    fs::remove_file(&attachment_path)?;
 
     ctx.say("📯 Your intro sound has been set!").await?;
     Ok(())
@@ -95,34 +121,4 @@ pub async fn clear_intro(ctx: Context<'_>) -> Result<(), Error> {
     }
 
     Ok(())
-}
-
-async fn get_audio_duration(file_path: &Path) -> Result<Duration, Error> {
-    let file = File::open(file_path)?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let hint = Hint::new();
-
-    let format = get_probe()
-        .format(
-            &hint,
-            mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
-        )?
-        .format;
-
-    if format.tracks().len() != 1 {
-        return Err("The audio file must contain exactly one track.".into());
-    }
-
-    if let Some(track) = format.tracks().first() {
-        if let Some(duration) = track.codec_params.n_frames.map(|frames| {
-            let sample_rate = track.codec_params.sample_rate.unwrap_or(1);
-            Duration::from_secs_f64(frames as f64 / sample_rate as f64)
-        }) {
-            return Ok(duration);
-        }
-    }
-
-    Err("Unable to determine audio duration.".into())
 }
