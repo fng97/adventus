@@ -6,7 +6,6 @@ use serenity::{
 };
 use songbird::{
     events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent},
-    input::YoutubeDl,
     Songbird,
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -19,13 +18,7 @@ use tracing::{info, warn};
 static DISCONNECT_HANDLES: Lazy<Mutex<HashMap<GuildId, JoinHandle<()>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-pub async fn play(
-    ctx: &Context,
-    guild_id: GuildId,
-    channel_id: ChannelId,
-    yt_url: &str,
-    http_client: reqwest::Client,
-) {
+pub async fn play(ctx: &Context, guild_id: GuildId, channel_id: ChannelId, file_path: &str) {
     let manager = songbird::get(ctx)
         .await
         .expect("Songbird Voice client placed in at initialisation.")
@@ -43,7 +36,13 @@ pub async fn play(
 
     handler.add_global_event(TrackEvent::Error.into(), TrackErrorHandler);
 
-    let _ = handler.play(YoutubeDl::new(http_client.clone(), yt_url.to_string()).into());
+    // Read bytes from the provided file and play them
+    let file_bytes = tokio::fs::read(file_path)
+        .await
+        .expect("Failed to read file");
+    // let input = File::from_memory(file_bytes).create_async();
+
+    let _ = handler.play_input(file_bytes.into());
 
     schedule_disconnect(guild_id, manager).await;
 }

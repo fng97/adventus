@@ -1,5 +1,5 @@
 use crate::common::{Data, Error};
-
+use crate::introductions::voice::play;
 use serenity::{
     all::{ChannelId, GuildId, UserId, VoiceState},
     client::Context,
@@ -39,7 +39,7 @@ pub async fn voice_state_update(
     old: &Option<VoiceState>,
     new: &VoiceState,
 ) -> Result<(), Error> {
-    let (_channel_id, _guild_id, _user_id) = match user_joined_voice(ctx, old, new) {
+    let (channel_id, guild_id, user_id) = match user_joined_voice(ctx, old, new) {
         Some(values) => values,
         None => {
             debug!("User did not join a voice channel.");
@@ -47,27 +47,16 @@ pub async fn voice_state_update(
         }
     };
 
-    //let url = match queries::get_url_for_user_and_guild(
-    //    user_id.get(),
-    //    guild_id.get(),
-    //    data.database.clone(),
-    //)
-    //.await
-    //{
-    //    Ok(url) => url,
-    //    Err(sqlx::Error::RowNotFound) => {
-    //        debug!(
-    //            "No introduction found for user {} in guild {}",
-    //            user_id, guild_id
-    //        );
-    //        return Ok(());
-    //    }
-    //    Err(e) => return Err(e.into()),
-    //};
+    // play {guild_id}_{user_id}.opus intro sound
+    let intro_path = format!("{}_{}.opus", guild_id, user_id);
+    let intro_path = std::path::Path::new("intros").join(intro_path);
+    if !intro_path.exists() {
+        debug!("Intro sound not found for user {:?}.", user_id);
+        return Ok(());
+    }
 
-    // TODO: play the sound
-
-    // TODO: increment intros played metric
+    // play intro
+    play(ctx, guild_id, channel_id, intro_path.to_str().unwrap()).await;
 
     Ok(())
 }

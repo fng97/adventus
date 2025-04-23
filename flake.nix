@@ -35,6 +35,7 @@
               cargo-edit
               rust-analyzer
               ffmpeg
+              # libopus # ?
             ] ++ lib.optionals pkgs.stdenv.isDarwin
             [ pkgs.darwin.apple_sdk.frameworks.SystemConfiguration ];
 
