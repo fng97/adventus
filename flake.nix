@@ -42,11 +42,7 @@
           env = {
             RUST_SRC_PATH =
               "${pkgs.rustToolchain}/lib/rustlib/src/rust/library"; # required by rust-analyzer
-            DATABASE_URL =
-              "postgres://postgres:password@localhost:5432/adventus";
           };
-
-          shellHook = "${pkgs.bash}/bin/bash ./scripts/init_db.sh";
         };
       });
     };
