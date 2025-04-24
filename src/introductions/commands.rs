@@ -1,10 +1,6 @@
-use crate::common::{Context, Error};
-use std::fs;
-use std::path::Path;
-use std::process::Command;
-use std::time::Duration;
+use crate::{Context, Error};
 
-const INTRO_DIR: &str = "./intros";
+use std::path::Path;
 
 async fn err_say(ctx: &Context<'_>, message: &str) -> Result<(), Error> {
     ctx.say(&format!("🔥 {message}")).await?;
@@ -21,9 +17,9 @@ pub async fn set_intro(
     #[description = "Attach an audio file"] attachment: poise::serenity_prelude::Attachment,
 ) -> Result<(), Error> {
     const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
-    const MAX_DURATION: Duration = Duration::from_secs(5);
+    const MAX_DURATION: std::time::Duration = std::time::Duration::from_secs(5);
 
-    fs::create_dir_all(INTRO_DIR)?; // ensure intros dir exists
+    let intros_dir = ctx.data().config.intros_dir.as_path();
 
     let user_id = ctx.author().id;
     let guild_id = match ctx.guild_id() {
@@ -39,14 +35,14 @@ pub async fn set_intro(
         return Ok(());
     }
 
-    let attachment_path = Path::new(INTRO_DIR).join(format!("{}_{}_temp", guild_id, user_id));
-    let new_intro_path = Path::new(INTRO_DIR).join(format!("{}_{}_new.opus", guild_id, user_id));
-    let final_intro_path = Path::new(INTRO_DIR).join(format!("{}_{}.opus", guild_id, user_id));
+    let attachment_path = Path::new(&intros_dir).join(format!("{}_{}_temp", guild_id, user_id));
+    let new_intro_path = Path::new(&intros_dir).join(format!("{}_{}_new.opus", guild_id, user_id));
+    let final_intro_path = Path::new(&intros_dir).join(format!("{}_{}.opus", guild_id, user_id));
 
     let file_bytes = attachment.download().await?;
-    fs::write(&attachment_path, &file_bytes)?;
+    tokio::fs::write(&attachment_path, &file_bytes).await?;
 
-    let output = Command::new("ffmpeg")
+    let output = std::process::Command::new("ffmpeg")
         .args(&[
             "-y",                                       // overwrite without asking
             "-i",                                       // input ↓
@@ -71,16 +67,16 @@ pub async fn set_intro(
         .output()?;
 
     if !output.status.success() {
-        fs::remove_file(&attachment_path).ok();
-        fs::remove_file(&new_intro_path).ok();
+        tokio::fs::remove_file(&attachment_path).await.ok();
+        tokio::fs::remove_file(&new_intro_path).await.ok();
         let stderr = String::from_utf8_lossy(&output.stderr);
         tracing::warn!("ffmpeg failed with status {}: {}", output.status, stderr);
         err_say(&ctx, "Failed to process audio.").await?;
         return Ok(());
     }
 
-    fs::rename(&new_intro_path, &final_intro_path)?;
-    fs::remove_file(&attachment_path)?;
+    tokio::fs::rename(&new_intro_path, &final_intro_path).await?;
+    tokio::fs::remove_file(&attachment_path).await?;
 
     ctx.say("📯 Your intro sound has been set!").await?;
     Ok(())
@@ -101,7 +97,7 @@ pub async fn clear_intro(ctx: Context<'_>) -> Result<(), Error> {
     };
 
     let user_intro_pattern = format!("{}_{}", guild_id, ctx.author().id);
-    let intro_files = fs::read_dir(INTRO_DIR)?;
+    let intro_files = std::fs::read_dir(ctx.data().config.intros_dir.as_path())?;
 
     let file_removed = intro_files
         .filter_map(Result::ok)
@@ -111,7 +107,7 @@ pub async fn clear_intro(ctx: Context<'_>) -> Result<(), Error> {
                 .to_string_lossy()
                 .starts_with(&user_intro_pattern)
         })
-        .map(|entry| fs::remove_file(entry.path()).is_ok())
+        .map(|entry| std::fs::remove_file(entry.path()).is_ok())
         .unwrap_or(false);
 
     if file_removed {

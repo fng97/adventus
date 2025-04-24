@@ -1,24 +1,15 @@
-use once_cell::sync::Lazy;
-use serenity::{
-    all::{ChannelId, GuildId},
-    async_trait,
-    client::Context,
-};
-use songbird::{
-    events::{Event, EventContext, EventHandler as VoiceEventHandler, TrackEvent},
-    Songbird,
-};
-use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::{
-    sync::{Mutex, MutexGuard},
-    task::JoinHandle,
-};
-use tracing::{info, warn};
+static DISCONNECT_HANDLES: once_cell::sync::Lazy<
+    tokio::sync::Mutex<
+        std::collections::HashMap<serenity::all::GuildId, tokio::task::JoinHandle<()>>,
+    >,
+> = once_cell::sync::Lazy::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
-static DISCONNECT_HANDLES: Lazy<Mutex<HashMap<GuildId, JoinHandle<()>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-pub async fn play(ctx: &Context, guild_id: GuildId, channel_id: ChannelId, file_path: &str) {
+pub async fn play(
+    ctx: &serenity::client::Context,
+    guild_id: serenity::all::GuildId,
+    channel_id: serenity::all::ChannelId,
+    file_path: &str,
+) {
     let manager = songbird::get(ctx)
         .await
         .expect("Songbird Voice client placed in at initialisation.")
@@ -27,20 +18,21 @@ pub async fn play(ctx: &Context, guild_id: GuildId, channel_id: ChannelId, file_
     let handler_lock = match manager.join(guild_id, channel_id).await {
         Ok(handler_lock) => handler_lock,
         Err(e) => {
-            warn!("Failed to join channel: {:?}", e);
+            tracing::warn!("Failed to join channel: {:?}", e);
             return;
         }
     };
 
-    let mut handler: MutexGuard<'_, songbird::Call> = handler_lock.lock().await;
+    let mut handler: tokio::sync::MutexGuard<'_, songbird::Call> = handler_lock.lock().await;
 
-    handler.add_global_event(TrackEvent::Error.into(), TrackErrorHandler);
+    handler.add_global_event(
+        songbird::events::TrackEvent::Error.into(),
+        TrackErrorHandler,
+    );
 
-    // Read bytes from the provided file and play them
     let file_bytes = tokio::fs::read(file_path)
         .await
         .expect("Failed to read file");
-    // let input = File::from_memory(file_bytes).create_async();
 
     let _ = handler.play_input(file_bytes.into());
 
@@ -49,12 +41,15 @@ pub async fn play(ctx: &Context, guild_id: GuildId, channel_id: ChannelId, file_
 
 struct TrackErrorHandler;
 
-#[async_trait]
-impl VoiceEventHandler for TrackErrorHandler {
-    async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
-        if let EventContext::Track(track_list) = ctx {
+#[serenity::async_trait]
+impl songbird::events::EventHandler for TrackErrorHandler {
+    async fn act(
+        &self,
+        ctx: &songbird::events::EventContext<'_>,
+    ) -> Option<songbird::events::Event> {
+        if let songbird::events::EventContext::Track(track_list) = ctx {
             for (state, handle) in *track_list {
-                warn!(
+                tracing::warn!(
                     "Track {:?} encountered an error: {:?}",
                     handle.uuid(),
                     state.playing
@@ -66,8 +61,11 @@ impl VoiceEventHandler for TrackErrorHandler {
     }
 }
 
-async fn schedule_disconnect(guild_id: GuildId, songbird: Arc<Songbird>) {
-    const DISCONNECT_AFTER: Duration = Duration::from_secs(60 * 5);
+async fn schedule_disconnect(
+    guild_id: serenity::all::GuildId,
+    songbird: std::sync::Arc<songbird::Songbird>,
+) {
+    const DISCONNECT_AFTER: std::time::Duration = std::time::Duration::from_secs(60 * 5);
 
     let mut handles = DISCONNECT_HANDLES.lock().await;
 
@@ -80,7 +78,7 @@ async fn schedule_disconnect(guild_id: GuildId, songbird: Arc<Songbird>) {
     let handle = tokio::spawn(async move {
         tokio::time::sleep(DISCONNECT_AFTER).await;
         if songbird.leave(guild_id).await.is_ok() {
-            info!(
+            tracing::info!(
                 "Disconnected from guild {} after {} minutes without using voice.",
                 guild_id,
                 DISCONNECT_AFTER.as_secs() / 60

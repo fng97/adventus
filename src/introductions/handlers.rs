@@ -1,19 +1,17 @@
-use crate::common::{Data, Error};
-use crate::introductions::voice::play;
-use serenity::{
-    all::{ChannelId, GuildId, UserId, VoiceState},
-    client::Context,
-};
-use tracing::debug;
+use crate::{introductions, Data, Error};
 
 /// Narrows VoiceStateUpdate event to user joining a voice channel.
 fn user_joined_voice(
     ctx: &serenity::client::Context,
-    old: &Option<VoiceState>,
-    new: &VoiceState,
-) -> Option<(ChannelId, GuildId, UserId)> {
+    old: &Option<serenity::all::VoiceState>,
+    new: &serenity::all::VoiceState,
+) -> Option<(
+    serenity::all::ChannelId,
+    serenity::all::GuildId,
+    serenity::all::UserId,
+)> {
     if new.user_id == ctx.cache.current_user().id {
-        debug!("Bot joined the channel. Ignoring.");
+        tracing::debug!("Bot joined the channel. Ignoring.");
         return None;
     }
 
@@ -26,7 +24,7 @@ fn user_joined_voice(
         .map(|old_channel_id| old_channel_id == channel_id)
         .unwrap_or(false)
     {
-        debug!("State change within same channel. Ignoring.");
+        tracing::debug!("State change within same channel. Ignoring.");
         return None;
     }
 
@@ -34,29 +32,27 @@ fn user_joined_voice(
 }
 
 pub async fn voice_state_update(
-    ctx: &Context,
-    _data: &Data,
-    old: &Option<VoiceState>,
-    new: &VoiceState,
+    ctx: &serenity::client::Context,
+    data: &Data,
+    old: &Option<serenity::all::VoiceState>,
+    new: &serenity::all::VoiceState,
 ) -> Result<(), Error> {
     let (channel_id, guild_id, user_id) = match user_joined_voice(ctx, old, new) {
         Some(values) => values,
         None => {
-            debug!("User did not join a voice channel.");
+            tracing::debug!("User did not join a voice channel.");
             return Ok(());
         }
     };
 
-    // play {guild_id}_{user_id}.opus intro sound
-    let intro_path = format!("{}_{}.opus", guild_id, user_id);
-    let intro_path = std::path::Path::new("intros").join(intro_path);
+    let intro_path = std::path::Path::new(data.config.intros_dir.as_path())
+        .join(format!("{}_{}.opus", guild_id, user_id));
     if !intro_path.exists() {
-        debug!("Intro sound not found for user {:?}.", user_id);
+        tracing::debug!("Intro sound not found for user {:?}.", user_id);
         return Ok(());
     }
 
-    // play intro
-    play(ctx, guild_id, channel_id, intro_path.to_str().unwrap()).await;
+    introductions::voice::play(ctx, guild_id, channel_id, intro_path.to_str().unwrap()).await;
 
     Ok(())
 }
