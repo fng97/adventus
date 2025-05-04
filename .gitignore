@@ -9,3 +9,6 @@
 
 # for local testing
 intros
+
+# nix result
+result
