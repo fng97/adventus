@@ -34,15 +34,44 @@ Plays a user's introduction sound when they join a voice channel. This is config
 
 ## How does it work?
 
-The [previous incarnation of this bot](https://github.com/fng97/adventus/tree/86a6bd3099d72eebba1c7738ce1e167f975be48a) was written in Rust. It used the excellent [Serenity](https://github.com/serenity-rs/serenity), [Poise](https://github.com/serenity-rs/poise), and [Songbird](https://github.com/serenity-rs/songbird) frameworks for the Discord client. This version introduced _Introductions_. This was me trying out Rust.
-
-The [original version of this bot](https://github.com/fng97/adventus/tree/0b9c31b675cc2f3c98eff944f6740f1e9b0f2cb8) used a serverless HTTP API to respond to [Discord Interactions](https://discord.com/developers/docs/interactions/receiving-and-responding) (e.g. `/roll`) without a Discord framework. Check out the architecture docs in the README for that commit. I was pretty proud of that one because it was simple and would never make it out of free tier.
+The [previous incarnation of this bot](https://github.com/fng97/adventus/tree/0b9c31b675cc2f3c98eff944f6740f1e9b0f2cb8) used a serverless API and [Discord Interactions](https://discord.com/developers/docs/interactions/receiving-and-responding) to handle the `/roll` slash command without a Discord framework. I was pretty proud of that, but I wanted to add more features and learn more about Rust, so I decided to rewrite it.
 
 What I'm using:
 
-(Or rather what I _will_ use. The Rust bot is what's live now. This is a work in progress.)
-
-- ⚡ [Zig](https://ziglang.org/)
-- ❄️ [Nix](https://nixos.org/) for reproducible, declaritive builds and development environments
-- 🪶 [SQLite](https://www.sqlite.org) for persistence
+- 🦀 [Rust](https://www.rust-lang.org) ✨
+- 🎙️ [Serenity](https://github.com/serenity-rs/serenity), [Poise](https://github.com/serenity-rs/poise), and [Songbird](https://github.com/serenity-rs/songbird) for the Discord client
+- 🐘 [PostgreSQL](https://www.postgresql.org) and [`sqlx`](https://github.com/launchbadge/sqlx) for persistence
 - 🪄 [GitHub Actions](https://github.com/features/actions) for CI/CD
+
+Future improvements:
+
+- cache audio for faster playback
+- help command
+- instrument with tracing spans
+- replace hard-coded values with configuration
+
+## Running Locally
+
+FIXME: No longer using dev container. Re-write this section for Nix or add back
+a dev container that uses Nix.
+
+You can get this running locally easily using Dev Containers. This assumes you have [Docker](https://www.docker.com) and [Visual Studio Code](https://code.visualstudio.com) installed, including the [Remote Containers](https://github.com/microsoft/vscode-remote-release) extension.
+
+To set up the development environment:
+
+1. Open Visual Studio Code
+2. From the command palette, select "Dev Containers: Clone Repository in Container Volume..."
+3. Enter `fng97/adventus`
+
+Now just wait for the container to build before Visual Studio Code reloads with your development environment ready to go!
+
+To run the tests:
+
+1. Start the database: `./scripts/init_db.sh`
+2. Run the tests: `cargo test`
+
+To run the bot:
+
+1. Ensure `Secrets.toml` includes your discord token in the format `DISCORD_TOKEN="your_token_here"`
+2. Start the database if you haven't already: `./scripts/init_db.sh`
+3. Run the bot locally: `cargo shuttle run`
