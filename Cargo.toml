@@ -1,6 +1,6 @@
 [package]
 name = "adventus"
-version = "2025.05.0"
+version = "2025.05.1"
 edition = "2021"
 
 [dependencies]
