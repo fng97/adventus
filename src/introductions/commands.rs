@@ -1,83 +1,84 @@
-use crate::common::{Context, Error};
-use crate::introductions::queries::{clear_url_for_user_and_guild, set_url_for_user_and_guild};
-use songbird::input::{Compose, YoutubeDl};
-use std::time::Duration;
+use crate::{Context, Error};
 
-const YOUTUBE_URL_REGEX: &str =
-    r"^(https?\:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)[a-zA-Z0-9_-]{11}(\?[\w=&]*)?$";
+use std::path::Path;
 
 async fn err_say(ctx: &Context<'_>, message: &str) -> Result<(), Error> {
     ctx.say(&format!("🔥 {message}")).await?;
     Ok(())
 }
 
-fn youtube_url_is_valid(url: &str) -> Result<bool, regex::Error> {
-    let regex = regex::Regex::new(YOUTUBE_URL_REGEX)?;
-    Ok(regex.is_match(url))
-}
-
-async fn get_yt_track_duration(
-    http_client: reqwest::Client,
-    yt_url: &str,
-) -> Option<std::time::Duration> {
-    let mut src = YoutubeDl::new(http_client, yt_url.to_string());
-
-    match src.aux_metadata().await {
-        Ok(metadata) => metadata.duration,
-        Err(_) => None,
-    }
-}
-
-const VOICE_DISABLED_MSG: &str = "Voice introductions have been temporarily disabled. YouTube is blocking my IP because it thinks I'm a bot 👀";
-
-/// Set your intro sound from a YouTube URL.
+/// Attach an audio file to be set as your intro.
 ///
-/// This sound plays when you join a voice channel. The sound is streamed
-/// directly from YouTube. The link you provide must be to a YouTube video that
-/// is less than 5 seconds long.
+/// This sound plays when you join a voice channel. The file must be smaller than 10MB. The sound must be less than 5s
+/// long.
 #[poise::command(slash_command)]
 pub async fn set_intro(
     ctx: Context<'_>,
-    #[description = "YouTube URL (video must be less than 5s long)"] url: String,
+    #[description = "Attach an audio file"] attachment: poise::serenity_prelude::Attachment,
 ) -> Result<(), Error> {
-    // const MAX_INTRO_DURATION: Duration = Duration::from_secs(5);
-    //
-    // let user_id = ctx.author().id;
-    // let guild_id = match ctx.guild_id() {
-    //     Some(guild_id) => guild_id,
-    //     None => {
-    //         err_say(&ctx, "This command can only be used in a server.").await?;
-    //         return Ok(());
-    //     }
-    // };
-    // if !youtube_url_is_valid(url.as_str())? {
-    //     err_say(&ctx, "Invalid YouTube URL.").await?;
-    //     return Ok(());
-    // }
-    //
-    // if let Some(duration) =
-    //     get_yt_track_duration(ctx.data().http_client.clone(), url.as_str()).await
-    // {
-    //     if duration > MAX_INTRO_DURATION {
-    //         err_say(&ctx, "The video must be less than 5 seconds long.").await?;
-    //         return Ok(());
-    //     }
-    // } else {
-    //     return Err("Failed to get video duration.".into());
-    // }
-    //
-    // set_url_for_user_and_guild(
-    //     user_id.get(),
-    //     guild_id.get(),
-    //     url.as_str(),
-    //     ctx.data().database.clone(),
-    // )
-    // .await?;
-    //
-    // ctx.say("📯 Your intro sound has been set!").await?;
+    const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+    const MAX_DURATION: std::time::Duration = std::time::Duration::from_secs(5);
 
-    ctx.say(VOICE_DISABLED_MSG).await?;
+    let intros_dir = ctx.data().config.intros_dir.as_path();
 
+    let user_id = ctx.author().id;
+    let guild_id = match ctx.guild_id() {
+        Some(guild_id) => guild_id,
+        None => {
+            err_say(&ctx, "This command can only be used in a server.").await?;
+            return Ok(());
+        }
+    };
+
+    if u64::from(attachment.size) > MAX_FILE_SIZE {
+        err_say(&ctx, "File size exceeds the 10MB limit.").await?; // default attachment size limit
+        return Ok(());
+    }
+
+    let attachment_path = Path::new(&intros_dir).join(format!("{}_{}_temp", guild_id, user_id));
+    let new_intro_path = Path::new(&intros_dir).join(format!("{}_{}_new.opus", guild_id, user_id));
+    let final_intro_path = Path::new(&intros_dir).join(format!("{}_{}.opus", guild_id, user_id));
+
+    let file_bytes = attachment.download().await?;
+    tokio::fs::write(&attachment_path, &file_bytes).await?;
+
+    let output = std::process::Command::new("ffmpeg")
+        .args(&[
+            "-y",                                       // overwrite without asking
+            "-i",                                       // input ↓
+            attachment_path.to_str().unwrap(),          // input file
+            "-t",                                       // trim to duration ↓
+            &format!("{}", MAX_DURATION.as_secs_f64()), // MAX_DURATION seconds
+            "-vn",                                      // drop any video streams
+            "-c:a",                                     // audio codec to use ↓
+            "libopus",                                  // opus
+            "-b:a",                                     // audio bitrate ↓
+            "16k",                                      // ~16 kbps
+            "-ac",                                      // audio channel ↓
+            "1",                                        // mono
+            "-ar",                                      // audio sample rate ↓
+            "16000",                                    // 16 kHz
+            "-application",                             // application type ↓
+            "voip",                                     // tune for VoIP/voice chat
+            "-vbr",                                     // variable bit rate ↓
+            "constrained",                              // constrained
+            new_intro_path.to_str().unwrap(),           // output file
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        tokio::fs::remove_file(&attachment_path).await.ok();
+        tokio::fs::remove_file(&new_intro_path).await.ok();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::warn!("ffmpeg failed with status {}: {}", output.status, stderr);
+        err_say(&ctx, "Failed to process audio.").await?;
+        return Ok(());
+    }
+
+    tokio::fs::rename(&new_intro_path, &final_intro_path).await?;
+    tokio::fs::remove_file(&attachment_path).await?;
+
+    ctx.say("📯 Your intro sound has been set!").await?;
     Ok(())
 }
 
@@ -87,24 +88,33 @@ pub async fn set_intro(
 /// channel. To set a new intro sound, use the `/set_intro` command.
 #[poise::command(slash_command)]
 pub async fn clear_intro(ctx: Context<'_>) -> Result<(), Error> {
-    // let guild_id = match ctx.guild_id() {
-    //     Some(guild_id) => guild_id,
-    //     None => {
-    //         err_say(&ctx, "This command can only be used in a server.").await?;
-    //         return Ok(());
-    //     }
-    // };
-    //
-    // clear_url_for_user_and_guild(
-    //     ctx.author().id.get(),
-    //     guild_id.get(),
-    //     ctx.data().database.clone(),
-    // )
-    // .await?;
-    //
-    // ctx.say("🧹 Your intro sound has been cleared!").await?;
+    let guild_id = match ctx.guild_id() {
+        Some(guild_id) => guild_id,
+        None => {
+            err_say(&ctx, "This command can only be used in a server.").await?;
+            return Ok(());
+        }
+    };
 
-    ctx.say(VOICE_DISABLED_MSG).await?;
+    let user_intro_pattern = format!("{}_{}", guild_id, ctx.author().id);
+    let intro_files = std::fs::read_dir(ctx.data().config.intros_dir.as_path())?;
+
+    let file_removed = intro_files
+        .filter_map(Result::ok)
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&user_intro_pattern)
+        })
+        .map(|entry| std::fs::remove_file(entry.path()).is_ok())
+        .unwrap_or(false);
+
+    if file_removed {
+        ctx.say("🧹 Your intro sound has been cleared!").await?;
+    } else {
+        err_say(&ctx, "No intro sound found to clear.").await?;
+    }
 
     Ok(())
 }

@@ -1,4 +1,3 @@
-// pub mod commands;
-// pub mod handlers;
-pub mod queries;
-// pub mod voice;
+pub mod commands;
+pub mod handlers;
+pub mod voice;

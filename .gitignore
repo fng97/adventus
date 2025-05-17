@@ -4,3 +4,12 @@
 # nix flake direnv
 .direnv
 
+# macOS
+.DS_Store
+
+# for local testing
+intros
+
+# nix result
+result
+.tmp
