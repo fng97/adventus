@@ -1,0 +1,41 @@
+name: Rust
+
+on: [push]
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_VERSION: 0.8.2
+  DATABASE_URL: postgres://postgres:password@localhost:5432/adventus
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: sqlx-${{ env.SQLX_VERSION }}
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli
+          --features postgres
+          --no-default-features
+          --locked
+      - name: Migrate database
+        run: |
+          sudo apt-get install libpq-dev -y
+          ./scripts/init_db.sh
+      - name: Run tests
+        run: |
+          sudo apt-get install musl-tools -y
+          cargo test
+      - name: Linting
+        run: cargo clippy -- -D warnings
