@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 once_cell = "1.21.3"
-rand = "0.8.5"
+rand = "0.9.1"
 songbird = "0.4.6"
 poise = "0.6.1"
 symphonia = "0.5.4"
