@@ -29,7 +29,7 @@ pub mod commands {
         let sides = sides.unwrap_or(DEFAULT_NUM_SIDES);
 
         let results: Vec<u8> = (0..rolls)
-            .map(|_| rand::thread_rng().gen_range(1..=sides))
+            .map(|_| rand::rng().random_range(1..=sides))
             .collect();
 
         let results_str = results
