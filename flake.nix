@@ -1,5 +1,5 @@
 {
-  inputs = { nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11"; };
+  inputs = { nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05"; };
 
   outputs = { self, nixpkgs, ... }:
     let
@@ -7,6 +7,8 @@
       supportedSystems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
       pkgsFor = nixpkgs.legacyPackages;
+
+      runtimeDeps = pkgs: with pkgs; [ openssl ffmpeg libopus ];
 
       # function to create package for each supported system
       makePackage = system:
@@ -19,11 +21,9 @@
           src = pkgs.lib.cleanSource ./.;
           cargoLock.lockFile = ./Cargo.lock;
           # build-time dependencies
-          nativeBuildInputs = with pkgs;
-            [ pkg-config ] ++ lib.optionals pkgs.stdenv.isDarwin
-            [ pkgs.darwin.apple_sdk.frameworks.SystemConfiguration ];
+          nativeBuildInputs = [ pkgs.pkg-config ];
           # run-time dependencies
-          buildInputs = with pkgs; [ openssl ffmpeg libopus ];
+          buildInputs = runtimeDeps pkgs;
         };
 
       # function to create dev shell for each supported system
@@ -68,8 +68,7 @@
                 StateDirectory = "adventus";
               };
 
-              # TODO: Duplicates runtime deps listed above. Abstract this.
-              path = with pkgs; [ openssl ffmpeg libopus ];
+              path = runtimeDeps pkgs;
 
               environment = {
                 DISCORD_TOKEN = cfg.discordToken;
