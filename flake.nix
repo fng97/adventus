@@ -33,7 +33,13 @@
           rustPackage = makePackage system;
         in pkgs.mkShell {
           inputsFrom = [ rustPackage ];
-          buildInputs = with pkgs; [ rustc cargo rust-analyzer cargo-edit ];
+          buildInputs = with pkgs; [
+            rustc
+            cargo
+            rust-analyzer
+            cargo-edit
+            clippy
+          ];
         };
     in {
       packages = forAllSystems (system: { default = makePackage system; });
