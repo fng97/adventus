@@ -43,7 +43,7 @@ pub async fn set_intro(
     tokio::fs::write(&attachment_path, &file_bytes).await?;
 
     let output = std::process::Command::new("ffmpeg")
-        .args(&[
+        .args([
             "-y",                                       // overwrite without asking
             "-i",                                       // input ↓
             attachment_path.to_str().unwrap(),          // input file
