@@ -1,5 +1,8 @@
 # Adventus
 
+> [!WARNING]
+> This was lots of fun to work on but it got old -- the bot is no longer live!
+
 👋 [Add me to your
 server!](https://discord.com/oauth2/authorize?client_id=1074795024946036889)
 
